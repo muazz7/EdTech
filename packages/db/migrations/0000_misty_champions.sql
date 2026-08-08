@@ -100,17 +100,12 @@ CREATE TABLE "note_pages" (
 	"lesson_id" uuid NOT NULL,
 	"page_number" integer NOT NULL,
 	"r2_object_key" text NOT NULL,
+	"mime_type" text,
+	"file_size_bytes" bigint,
 	"width" integer,
 	"height" integer,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "note_pages_lesson_page_key" UNIQUE("lesson_id","page_number")
-);
---> statement-breakpoint
-CREATE TABLE "note_sources" (
-	"lesson_id" uuid PRIMARY KEY NOT NULL,
-	"content_json" jsonb NOT NULL,
-	"render_status" text DEFAULT 'pending' NOT NULL,
-	"rendered_at" timestamp with time zone,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "entitlements" (
@@ -382,7 +377,6 @@ ALTER TABLE "lessons" ADD CONSTRAINT "lessons_module_id_modules_id_fk" FOREIGN K
 ALTER TABLE "lessons" ADD CONSTRAINT "lessons_course_id_courses_id_fk" FOREIGN KEY ("course_id") REFERENCES "public"."courses"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "modules" ADD CONSTRAINT "modules_course_id_courses_id_fk" FOREIGN KEY ("course_id") REFERENCES "public"."courses"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "note_pages" ADD CONSTRAINT "note_pages_lesson_id_lessons_id_fk" FOREIGN KEY ("lesson_id") REFERENCES "public"."lessons"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "note_sources" ADD CONSTRAINT "note_sources_lesson_id_lessons_id_fk" FOREIGN KEY ("lesson_id") REFERENCES "public"."lessons"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "entitlements" ADD CONSTRAINT "entitlements_student_id_profiles_id_fk" FOREIGN KEY ("student_id") REFERENCES "public"."profiles"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "entitlements" ADD CONSTRAINT "entitlements_course_id_courses_id_fk" FOREIGN KEY ("course_id") REFERENCES "public"."courses"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "entitlements" ADD CONSTRAINT "entitlements_plan_id_plans_id_fk" FOREIGN KEY ("plan_id") REFERENCES "public"."plans"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint

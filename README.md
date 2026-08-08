@@ -56,6 +56,97 @@ npm run build --workspace=@edtech/web
 npx eslint packages apps/web/src
 ```
 
+## Cron
+
+Schedules live in [vercel.json](vercel.json). Every `/api/v1/cron/*` route is
+protected by `CRON_SECRET`, compared in constant time — these are not
+user-authenticated but must never be publicly callable, since
+`poll-video-status` hits the paid vendor API on every request.
+
+Sub-daily cron requires **Vercel Pro**, which Section 20 already budgets for
+(Hobby also forbids commercial use). On Hobby the 5-minute poll silently becomes
+daily, which looks like "uploads never finish processing".
+
+## Database connections — read this before changing DATABASE_URL
+
+Supabase gives you three hosts. Only two are usable, and they are not
+interchangeable.
+
+| Host | Port | Use for | Why |
+|---|---|---|---|
+| `db.<ref>.supabase.co` | 5432 | **nothing** | **IPv6-only.** Unreachable from any IPv4-only network. |
+| `aws-0-<region>.pooler.supabase.com` | 5432 (session) | app runtime **and** migrations | Pins one backend per connection. Transactions work. |
+| `aws-0-<region>.pooler.supabase.com` | 6543 (transaction) | not currently used | Cannot hold a multi-statement transaction on one backend. |
+
+The transaction pooler is the usual serverless advice and it is wrong for this
+app. Login revokes the previous session and inserts the new one in a single
+transaction (Section 6.3). Under transaction-mode pooling the `INSERT` lands on
+a different backend from the `UPDATE`, blocks on the row lock the `UPDATE` still
+holds, and the `COMMIT` arrives at a backend with no open transaction —
+`25P01: there is no transaction in progress`. The request then hangs until
+`statement_timeout` and strands an idle-in-transaction backend. Payment
+approval (Section 8.2) has the same shape and would fail identically.
+
+`MIGRATION_DATABASE_URL` exists because DDL runs in transactions too; it points
+at the same session pooler.
+
+Also: `max: 1` on the connection pool starves transactions. An un-awaited query
+— `guardRequest`'s throttled `touchSession`, for instance — competes for the
+same single connection an open transaction is holding. Pool size is 5, override
+with `DATABASE_POOL_MAX`.
+
+## Scripts
+
+```bash
+npm test                                 # 81 unit/integration tests against the DB
+node scripts/db-check.mjs                # tables, RLS, policies, sessions, stuck backends
+node scripts/db-check.mjs --kill-idle    # clear idle-in-transaction backends (DEV ONLY)
+node scripts/db-check.mjs --reset-devices # clear the device-switch budget (DEV ONLY)
+node scripts/two-device-test.mjs         # credential lifecycle over HTTP
+node scripts/builder-smoke.mjs           # teacher course builder end to end
+node scripts/payments-smoke.mjs          # payment settings + verification queue
+node scripts/contrast-check.mjs          # design tokens vs WCAG (no server needed)
+```
+
+All three HTTP suites share ONE cookie jar (`dev-web`). That is deliberate:
+each jar is a distinct device fingerprint, and three separate jars burned the
+4-per-30-days budget in a single sitting. Sharing one makes them all "the same
+browser", which is what they actually are. `two-device-test.mjs` still exercises
+a second device via its android fingerprint.
+
+`contrast-check.mjs` parses the tokens out of `globals.css` and asserts every
+documented pair, in **both** themes. The palette is deliberately bright, and
+bright colours fail as text — this is what stops a future tweak from quietly
+making a label unreadable. It also asserts the *inverse*: the vivid hues must
+stay **below** 4.5:1 on the page background, because a vivid token that became
+readable has stopped being vivid and the palette has drifted back to muted.
+
+The last two need the dev server. Both persist cookies to
+`scripts/.dev-cookies.json`, which is **load-bearing**: the web device
+fingerprint is derived from an httpOnly cookie plus the UA (Section 6.3), so a
+script that discards cookies presents a new device on every run and exhausts the
+4-per-30-days switch budget in four runs. `--reset-devices` unblocks a test
+account; in production that unblock is a deliberate manual step after asking the
+student a question, never a bulk clear.
+
+`builder-smoke.mjs` skips `/auth/otp/request` on purpose — a Supabase test
+number accepts its fixed code directly, and requesting one would consume the
+3-per-phone-per-15-min budget that `two-device-test.mjs` also draws on.
+
+`npm test` compiles first, then runs `packages/core/dist/**/*.test.js`. The glob
+is deliberate — passing the directory alone silently discovers nothing and
+reports a vacuous pass.
+
+The tests use the **real database**, not mocks. Every bug found while getting
+Phase 0 running lived in SQL or connection behaviour — a partial unique index,
+a CHECK constraint, RLS recursion, transaction pooling — and a mocked `db` would
+have passed all of them. Fixtures create real Supabase auth users via the Admin
+API and tear them down in `after()`.
+
+`--kill-idle` earns its place: an HMR reload or a killed dev server can drop a
+client mid-transaction, and the orphaned backend keeps its row locks. The
+symptom is the next login hanging on `one_live_session_per_user`.
+
 ## Migrations
 
 Forward-only. Never edit a migration after merge. Every migration must be safe
@@ -86,39 +177,247 @@ transaction ID cannot be claimed twice on the same channel. Surface it as
 
 ## Phase 0 status
 
-Done and verified to compile:
+**Exit criteria met.** Section 21.2 defines Phase 0 as ending when "you can log
+in on two devices and watch the first kick out the second". `two-device-test.mjs`
+passes all 14 checks against the live Supabase project, and the `active_sessions`
+audit trail shows the expected `revoked_reason` values (`new_device`, then
+`user_logout`).
+
+Applied and verified against the database:
 
 - Monorepo, TypeScript project references, ESLint boundary rules
-- Drizzle schema — 27 tables, all partial indexes and CHECK constraints present
-  in the generated SQL
-- RLS baseline migration
-- Session guard (`guardRequest`) — JWT + `X-Session-Id` against a live session row
+- Drizzle schema — 26 tables, all partial indexes and CHECK constraints
+- RLS: enabled on 16 tables, 10 policies, `auth.users` FK present
+- Session guard — JWT + `X-Session-Id`, rejects a forged token/session pairing
+- Single live session enforced by `one_live_session_per_user`
 - Device-switch policy — 4 distinct fingerprints per rolling 30 days
-- Entitlement engine — `checkLessonAccess` / `checkCourseAccess`
+- Entitlement engine — `checkLessonAccess` / `checkCourseAccess` (compiled, not
+  yet exercised: needs course and lesson rows, which arrive in Phase 1)
 - `/api/v1/auth/{otp/request, otp/verify, me, logout}`
 - Design tokens with verified contrast ratios, light and dark
 
-Not done, still Phase 0:
+Phase 0 follow-ups, also done:
 
-- **Never run against a real database.** Every migration and query above is
-  compile-verified only.
-- Refresh-token rotation — `/auth/otp/verify` returns a token but does not yet
-  persist or rotate it
-- Rate limiting (Section 6.4) — needs Upstash Redis
-- FCM push to the kicked device on new-device login
-- Sentry
-- The five tests in Section 19.4
+- **Refresh-token rotation** — single-use, SHA-256 hashed, grouped into
+  families. Replaying a burned token revokes the family and kills the session;
+  a token cannot outlive its session or survive a new-device login.
+- **Rate limiting** — Upstash Redis REST when configured, in-process counters
+  otherwise (with a warning, because the fallback does not limit a
+  multi-instance deployment). Fails **open**: an Upstash outage must not lock
+  out students who paid.
+- **FCM revoke-push** — `notifySessionRevoked` pushes a silent logout to the
+  device just kicked, scoped to that session's tokens so the device that
+  legitimately signed in is not logged out too. No-ops with a warning when
+  `FCM_SERVICE_ACCOUNT_JSON` is unset. Push is a latency optimisation, never a
+  security control — the guarantee is that the revoked device fails on its next
+  request regardless.
+- **Sentry** — server, edge, and browser, with `beforeSend` scrubbing phone
+  numbers, JWTs, bearer tokens, presigned-URL signatures, and every secret env
+  name. Session Replay deliberately **off**: it would record the watermarked
+  player and payment proof screenshots.
+- **Section 19.4 tests 1 and 3** — 51 tests, all passing.
 
-## Decisions still blocking later phases
+Credentials still needed (each degrades gracefully until then):
+`UPSTASH_REDIS_REST_URL` / `_TOKEN`, `FCM_SERVICE_ACCOUNT_JSON`, `SENTRY_DSN`.
 
-From Section 22.1, unanswered:
+Section 19.4 tests still to write, each blocked on a feature that does not
+exist yet:
 
-1. Owner controls all pricing, or teachers set their own? (blocks Phase 2)
-2. What is the note-to-image converter — rich-text rendered to images,
-   photographed handwriting, or a stylus canvas? (blocks Phase 5; the three
-   implementations share nothing)
-3. Bangladeshi business entity for SSLCommerz? (long lead time — start now)
-4. Mac access for iOS builds? (blocks Phase 8)
-5. Assignment resubmission — until graded, or unlimited? (blocks Phase 7)
-6. Subscription price point in BDT (drives the Bunny.net evaluation)
-7. Do lapsed subscribers keep access to completed courses?
+- **Test 2** payment approval — entitlement issuance, renewal stacking,
+  duplicate transaction ID. Arrives with Phase 2.
+- **Test 4** quiz grading — auto-score, time limit, attempt limits. Phase 7.
+
+## Phase 1 status (Content spine)
+
+Done, 81 tests passing:
+
+- **Vendor boundary** — `VideoProvider` in `packages/core/src/media/types.ts`.
+  VdoCipher is one adapter file; Bunny.net is a live alternative pending a quote
+  (Section 3.4). No vendor status string or payload shape escapes the adapter.
+- **R2** via `aws4fetch`, not the AWS SDK. Presigned PUT signs Content-Type and
+  Content-Length (`allHeaders: true`) — without that flag Section 9.2's "pinned
+  in the signature" is decoration.
+- **Gated issuance** — `/lessons/:id/{playback,asset,note-pages}`. Rate limits
+  live in `packages/core`, not the route handlers, so a new endpoint cannot
+  forget them. Desktop web is capped to 720p (Section 17.2 L3 exposure, and
+  Section 20.5's biggest cost lever).
+- **Section 19.4 test 5** — asserts no grant is minted on denial, not merely
+  that a 403 came back. An OTP alone plays the video.
+- **Teacher CRUD** — courses, modules, lessons, drag-and-drop reorder at both
+  levels, upload flows for video / documents / multi-page notes.
+- **Price-change audit** (ADR 0002) with before/after diffs, and no row written
+  when nothing audited actually changed.
+- **`/cron/poll-video-status`** — batched to 25 lessons per run, notifies the
+  owning teacher on ready and on failure.
+
+Two deliberate deviations from the specification:
+
+1. **Section 18 lists only `POST /teacher/modules/:id/reorder`**, which is
+   ambiguous about which level it reorders, while Section 2.2 requires
+   drag-and-drop at both. Split into
+   `/teacher/courses/:id/reorder-modules` (modules) and
+   `/teacher/modules/:id/reorder` (lessons).
+2. **Ownership failures return 404, not 403.** A 403 confirms the id exists,
+   which lets one teacher enumerate the catalog's internal ids.
+
+### Teacher UI
+
+Sign-in at `/login` (phone + OTP), portal at `/teacher`, builder at
+`/teacher/courses/:id`. Verified end to end by `builder-smoke.mjs`.
+
+Design decisions, all traceable to the design-system pass:
+
+- **Style is Flat Design with subtle elevation**, not the generated
+  recommendation (Claymorphism + Comic Neue), which is children's-app styling
+  and wrong for paid exam prep with an admin console.
+- **Reordering is exposed three ways**: move up/down buttons as the primary
+  control, native HTML5 drag as a mouse enhancement, and an `aria-live` region
+  announcing every move. Drag-only reordering excludes keyboard users entirely
+  and does not work on touch at all — so the buttons are the real feature and
+  drag is the garnish.
+- **No icon library and no browser Sentry.** First-load JS is 103 kB shared,
+  128 kB on the builder. Section 1.4 names uneven Bangladeshi bandwidth as a
+  constraint, so bytes are spent deliberately.
+- **Reorder is optimistic with rollback.** The server rejects any order that is
+  not exactly the current children, so a stale client gets a 422 and the
+  previous order is restored rather than the screen disagreeing with the
+  database.
+- **Move buttons are disabled at the ends, not hidden**, so a row's control
+  count does not change as items move.
+- **Delete confirms inline** and states what will be lost, with Cancel placed
+  before Delete.
+
+`/auth/refresh` prefers the httpOnly cookie over the request body. That is
+correct for the browser — the cookie is authoritative and unreadable to page
+scripts — and means the body path is exercised only by mobile, which has no
+cookies. Tests must pass `noCookies` to drive it.
+
+### Theme
+
+**Light is the default and is not negotiable by the OS.** The dark palette is
+gated on `[data-theme='dark']`, not `@media (prefers-color-scheme: dark)` —
+with the media query, anyone whose machine was in dark mode saw a navy product
+and never saw the intended off-white ground. `color-scheme: light` on `:root`
+carries that through to native controls and scrollbars, which is the part that
+usually gets missed.
+
+The dark tokens are kept rather than deleted, and are contrast-verified, so
+adding a theme switcher later means setting an attribute, not redoing colours.
+
+### Student viewer
+
+`/learn/lessons/:id` renders all three content types. Teachers resolve as
+`owner` in `checkLessonAccess`, so **Preview as student** in the builder opens
+the real viewer with real DRM and a real watermark — which is the Phase 1 exit
+criterion from Section 21.2.
+
+- **Video** — the page never receives a video id, only a single-use OTP and
+  playbackInfo, minted immediately before playback. The vendor player runs in
+  its own iframe; that is what lets the browser mark the decoded surface
+  non-capturable, so it is not an implementation detail to optimise away.
+- **PDF / images / note pages** — rendered to `<canvas>` with the watermark
+  **composited into the bitmap**, not laid over it in CSS. A DOM overlay is
+  removed with two clicks in devtools and any canvas export would come out
+  clean; stamping the pixels means a save, a `toDataURL`, or a screenshot all
+  carry the attribution.
+- **pdf.js is dynamically imported**, so a student opening a video or a
+  photographed note never downloads the PDF engine. It is the heaviest
+  dependency here and `/learn/lessons/:id` stays at 114 kB because of it.
+- `GET /lessons/:id` returns metadata with **no media handle** — no video id, no
+  R2 key. Asserted by `builder-smoke.mjs`, because a metadata response carrying
+  a video id would be a durable identifier for paid content.
+
+Honest limit, unchanged from ADR 0001 and Section 17.3: on web this is
+**deterrence, not prevention**. Print Screen captures a canvas like anything
+else. On mobile `FLAG_SECURE` genuinely blocks it, which is the argument for
+putting the highest-value notes there.
+
+Not built yet in Phase 1:
+
+- `GET /courses`, `/courses/:slug`, `/courses/:slug/curriculum`, `/free-resources`
+  (the public catalog is Phase 3)
+- Progress tracking and resume position (Phase 3)
+
+## Phase 2 status (Money)
+
+Backend complete, 26 payment tests passing. See
+[ADR 0003](docs/adr/0003-teacher-collected-payments.md) for the money model —
+teachers collect and verify their own course payments, and funds never transit
+the platform.
+
+Teacher UI done:
+
+- `/teacher/payment-methods` — bKash / Nagad / Rocket numbers, normalised to the
+  local `01XXXXXXXXX` form a wallet app accepts. Deactivated, never deleted: a
+  payment references the method it was shown against, and a student disputing
+  "you told me to send here" needs that record.
+- `/teacher/payments` — the verification queue. Built phone-first because
+  Section 8.2 says plainly when it gets used: at 11pm, from bed. Cards not
+  tables, amount and reference code large enough to check against a wallet SMS
+  at a glance, and **Approve sits alone with Reject below it** so a half-awake
+  thumb cannot confuse them. Pending is oldest-first.
+- The proof screenshot is fetched **per view**, not with the queue: a signed URL
+  shipped with the list would stay live for every row the teacher never opened,
+  and these images carry a student's name, number and balance.
+
+Student UI done:
+
+- `/purchase/:courseId` — instructions, submission, pending confirmation. Every
+  value the student must reproduce in a wallet app (number, amount, reference
+  code) is one tap to copy and rendered in tabular figures, because a mistyped
+  number is an unrecoverable transfer and a mistyped reference is a payment the
+  teacher cannot match.
+- `/account/payments` — status per payment, written to answer "what do I do
+  now?" rather than to name the database state.
+- The locked-lesson screen now names and prices the course and links to the
+  purchase page. A 403 for a *published* course carries the paywall facts in
+  `error.details` for exactly that; withheld for unpublished and revoked, where
+  there is nothing to sell.
+
+`payments-smoke.mjs` now drives the whole loop over HTTP — teacher publishes a
+number and a course, student creates an intent and submits proof, teacher
+approves, student gains access. The student's session is minted directly
+(`scripts/lib/student-session.mjs`) because only one Supabase test phone number
+exists and the teacher holds it; everything after authentication is real, and
+the auth path itself is covered by `two-device-test.mjs`.
+
+Not built yet in Phase 2:
+
+- Expiry reminders and the grace period (Section 8.3)
+- Student roster / manual-grant UI (the endpoints exist and are tested)
+- Plan purchase UI (single-course only so far; `plans` has no admin screen)
+
+**Never executed against the real vendors.** VdoCipher and R2 have no
+credentials yet, so both adapters are unit-tested behind a fake and verified
+only by compilation. Every integration in this project has surfaced at least one
+surprise on first real contact; expect the same, particularly for the presigned
+PUT, where signed-header pinning either works exactly or fails opaquely.
+
+## Decisions
+
+Answered — see [docs/adr/](docs/adr/). These override the specification where
+they conflict:
+
+- **[ADR 0001](docs/adr/0001-notes-are-uploaded-files.md)** — notes are
+  uploaded PDFs and phone photos, not rendered from an editor. Deletes the
+  Section 9.3 pipeline and collapses roadmap Phase 5 into Phase 1.
+- **[ADR 0002](docs/adr/0002-teacher-controlled-pricing.md)** — teachers set
+  their own course prices, no approval. Promo codes deferred to the first
+  post-launch phase.
+- **[ADR 0003](docs/adr/0003-teacher-collected-payments.md)** — teachers publish
+  their own bKash/Nagad/Rocket numbers, verify their own course payments, and
+  grant access by hand. Money never transits the platform.
+
+Still open, from Section 22.1:
+
+1. Bangladeshi business entity for SSLCommerz? (long lead time — start now)
+2. Mac access for iOS builds? (blocks Phase 8)
+3. Assignment resubmission — until graded, or unlimited? (blocks Phase 7)
+4. Subscription price point in BDT (drives the Bunny.net evaluation)
+5. Do lapsed subscribers keep access to completed courses?
+
+## Known gap
+
+A course with `price_poisha = 0` still requires an entitlement — the
+entitlement engine checks `lessons.is_free` but not a zero course price. Close
+this in Phase 2 (ADR 0002).

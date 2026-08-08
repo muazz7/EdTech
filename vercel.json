@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/v1/cron/poll-video-status",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "comment": "03:00 UTC is 09:00 Asia/Dhaka — after the overnight submissions, before the day's reviewing starts.",
+      "path": "/api/v1/cron/expire-stale-payments",
+      "schedule": "0 3 * * *"
+    }
+  ]
+}

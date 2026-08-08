@@ -1,0 +1,14 @@
+{
+  "builder-smoke": {
+    "refresh_token": "SrtwONLt2LLpqdx2GFP4j7gKndl4NX6lkM0vBOD6f3A",
+    "device_fp": "e2635dce-bd51-4bc5-a344-93637a7631c5",
+    "session_id": "019fe185-87a6-712b-b0cf-15bcbe638cfb"
+  },
+  "two-device": {
+    "device_fp": "ad4dea66-3d60-4654-9d8f-957d7c1c8b99"
+  },
+  "payments-smoke": {},
+  "dev-web": {
+    "device_fp": "1629b9b9-b7c4-4aff-8ddf-0b2792d32267"
+  }
+}

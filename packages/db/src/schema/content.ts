@@ -4,7 +4,6 @@ import {
   boolean,
   index,
   integer,
-  jsonb,
   pgTable,
   text,
   timestamp,
@@ -102,9 +101,19 @@ export const lessons = pgTable(
   ],
 );
 
-/** Notes render to N page images; this holds them. Students receive page
- *  images, never the source JSON — text is not selectable, so it cannot be
- *  bulk-copied into a competing PDF. */
+/**
+ * Ordered pages of an uploaded note.
+ *
+ * Notes are teacher-uploaded PDFs and phone photographs of handwritten pages —
+ * NOT rendered from a rich-text editor. There is no Tiptap source, no Satori
+ * render job, and nothing to re-edit; the uploaded file is the artifact.
+ * A single-file PDF note uses lessons.r2_object_key alone. A photographed note
+ * is N image rows here, ordered by page_number.
+ *
+ * Delivery is view-online-only: presigned GET (15 min), fetched into a
+ * <canvas> with a watermark overlay, never handed to the browser as a file.
+ * See the honesty note in Section 17.3 about what that does and does not stop.
+ */
 export const notePages = pgTable(
   'note_pages',
   {
@@ -114,22 +123,16 @@ export const notePages = pgTable(
       .references(() => lessons.id, { onDelete: 'cascade' }),
     pageNumber: integer('page_number').notNull(),
     r2ObjectKey: text('r2_object_key').notNull(),
+    /** Phone photos land as JPEG and get converted to WebP on upload; PDFs
+     *  stay as-is and are paginated client-side by PDF.js. */
+    mimeType: text('mime_type'),
+    fileSizeBytes: bigint('file_size_bytes', { mode: 'number' }),
     width: integer('width'),
     height: integer('height'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [unique('note_pages_lesson_page_key').on(t.lessonId, t.pageNumber)],
 );
-
-/** Source of truth for the note editor, so teachers can re-edit. */
-export const noteSources = pgTable('note_sources', {
-  lessonId: uuid('lesson_id')
-    .primaryKey()
-    .references(() => lessons.id, { onDelete: 'cascade' }),
-  contentJson: jsonb('content_json').notNull(), // Tiptap document
-  renderStatus: text('render_status').notNull().default('pending'),
-  renderedAt: timestamp('rendered_at', { withTimezone: true }),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
 
 export type Course = typeof courses.$inferSelect;
 export type Module = typeof modules.$inferSelect;

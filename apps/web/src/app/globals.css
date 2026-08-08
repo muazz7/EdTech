@@ -3,19 +3,38 @@
 /*
  * Design tokens — Master EdTech Platform.
  *
- * Palette is education teal + course amber. Contrast ratios below are computed
- * against WCAG 2.1 relative luminance, not assumed:
+ * Bright, energetic palette on an off-white ground: electric cyan, electric
+ * yellow, soft coral.
  *
- *   #0F766E on #FFFFFF ............ 5.47:1  AA body text        ✓
- *   #0D9488 on #FFFFFF ............ 3.74:1  UI glyphs / charts only
- *   #D97706 on #FFFFFF ............ 3.19:1  large text / glyphs only
- *   #2F5F5A on #F0FDFA ............ 6.93:1  AA secondary text   ✓
- *   #E6FFFA on #0A1D1B ........... 16.6:1  AA dark body        ✓
- *   #2DD4BF on #0A1D1B ............ 9.36:1  AA dark primary     ✓
- *   #35726A on #0A1D1B ............ 3.13:1  meaningful dark divider
+ * THE RULE THAT MAKES THIS WORK: a vibrant colour and a readable colour are not
+ * the same colour. Light cyan on off-white is 1.70:1 — invisible as text. So the
+ * palette splits every hue into two roles:
  *
- * --color-primary-visual is the brighter teal. It is for chart series, icons
- * and decorative fills ONLY. Never put text on it and never use it as text.
+ *   *-vivid   fills, chips, charts, icon accents, progress bars, decoration.
+ *             NEVER text on the page background. Dark text ON them is fine and
+ *             is how the brightness actually reaches the screen.
+ *   primary / success / warning / destructive
+ *             the darker anchors. Safe as text, and safe as a button background
+ *             carrying white text.
+ *
+ * Every ratio below is computed against WCAG 2.1 relative luminance, not
+ * assumed. Background is #F7F8FA unless stated.
+ *
+ *   #0F172A text          on bg ......... 16.80:1  AA/AAA body        ✓
+ *   #475569 muted text    on bg .......... 7.13:1  AA secondary       ✓
+ *   #0E7490 primary       on bg .......... 5.04:1  AA text            ✓
+ *   #FFFFFF              on #0E7490 ...... 5.36:1  AA button label    ✓
+ *   #047857 success       on bg .......... 5.16:1  AA                 ✓
+ *   #B45309 warning       on bg .......... 4.73:1  AA                 ✓
+ *   #FFFFFF              on #E11D48 ...... 4.70:1  AA button label    ✓
+ *   #64748B border-strong on bg .......... 4.48:1  passes 3:1 for UI  ✓
+ *   #E2E8F0 border        on bg .......... 1.16:1  decorative ONLY
+ *   #22D3EE cyan-vivid    on bg .......... 1.70:1  fills ONLY
+ *   #FACC15 yellow-vivid  on bg .......... 1.44:1  fills ONLY
+ *   #FB7185 coral-vivid   on bg .......... 2.53:1  fills / large glyph
+ *   #0F172A text          on #22D3EE ...... 9.88:1  chip text          ✓
+ *   #0F172A text          on #FACC15 ..... 11.66:1  chip text          ✓
+ *   #0F172A text          on #FB7185 ...... 6.63:1  chip text          ✓
  */
 
 @theme {
@@ -36,24 +55,41 @@
   --text-3xl: 2.5rem;
 
   /* ── Light palette ─────────────────────────────────────────────────── */
-  --color-background: #f0fdfa;
+  --color-background: #f7f8fa;
   --color-surface: #ffffff;
-  --color-foreground: #134e4a;
-  --color-muted: #e8f1f4;
-  --color-muted-foreground: #2f5f5a;
+  /* Slightly raised surface for nested panels, so a card inside a card still
+     reads as a separate layer without another shadow. */
+  --color-surface-sunken: #eef2f7;
+  --color-foreground: #0f172a;
+  --color-muted: #eef2f7;
+  --color-muted-foreground: #475569;
 
-  --color-primary: #0f766e;
-  --color-primary-visual: #0d9488;
+  --color-primary: #0e7490;
   --color-on-primary: #ffffff;
-  --color-secondary: #2dd4bf;
-  --color-accent: #d97706;
+  --color-primary-hover: #155e75;
 
-  --color-border: #c9e9e3;
-  --color-border-strong: #5eead4;
-  --color-ring: #0f766e;
+  /* Vivid set — fills and decoration. Never text on the page background. */
+  --color-cyan-vivid: #22d3ee;
+  --color-yellow-vivid: #facc15;
+  --color-coral-vivid: #fb7185;
 
-  --color-destructive: #dc2626;
-  --color-success: #15803d;
+  /* Chip tints. Pale enough that --color-foreground sits on them at 12:1+. */
+  --color-cyan-tint: #cffafe;
+  --color-yellow-tint: #fef9c3;
+  --color-coral-tint: #ffe4e6;
+
+  --color-border: #e2e8f0;
+  /* Control boundaries: inputs, selects, secondary buttons. WCAG 1.4.11 asks
+     3:1 for a UI component boundary, which the pale border above does not meet. */
+  --color-border-strong: #64748b;
+  --color-ring: #0e7490;
+
+  /* #e11d48 is 4.70:1 on pure white but only 4.42:1 on this off-white ground —
+     below AA. Verified by scripts/contrast-check.mjs, which is why the token is
+     the darker rose. */
+  --color-destructive: #be123c;
+  --color-on-destructive: #ffffff;
+  --color-success: #047857;
   --color-warning: #b45309;
 
   /* ── Spacing — 4/8px rhythm ────────────────────────────────────────── */
@@ -79,9 +115,9 @@
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
 
   /* ── Elevation ─────────────────────────────────────────────────────── */
-  --shadow-sm: 0 1px 2px rgb(19 78 74 / 0.06);
-  --shadow-md: 0 4px 6px rgb(19 78 74 / 0.07);
-  --shadow-lg: 0 10px 20px rgb(19 78 74 / 0.09);
+  --shadow-sm: 0 1px 2px rgb(15 23 42 / 0.06);
+  --shadow-md: 0 4px 6px rgb(15 23 42 / 0.07);
+  --shadow-lg: 0 10px 20px rgb(15 23 42 / 0.09);
 
   /* ── z-index scale ─────────────────────────────────────────────────── */
   --z-base: 0;
@@ -96,37 +132,71 @@
 }
 
 /*
- * Dark mode is a separate tonal set, not an inversion. Contrast is verified
- * independently — light-mode ratios do not carry over.
+ * LIGHT IS THE DEFAULT, DELIBERATELY.
+ *
+ * The dark set below is gated on an explicit [data-theme='dark'] rather than
+ * @media (prefers-color-scheme: dark). With the media query, anyone whose OS is
+ * in dark mode saw a navy product regardless of what the design intended, and
+ * the off-white ground never appeared for them.
+ *
+ * The palette is kept rather than deleted: it is contrast-verified in both
+ * themes by scripts/contrast-check.mjs, so a theme switcher later is a matter
+ * of setting the attribute, not redoing the colours.
  */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-background: #0a1d1b;
-    --color-surface: #12302c;
-    --color-foreground: #e6fffa;
-    --color-muted: #12302c;
-    --color-muted-foreground: #99f6e4;
+:root {
+  /* Makes native controls, scrollbars and form widgets render light too.
+     Without this they follow the OS and stay dark against a light page, which
+     is the part people usually miss. */
+  color-scheme: light;
+}
 
-    --color-primary: #2dd4bf;
-    --color-primary-visual: #5eead4;
-    --color-on-primary: #0a1d1b;
-    --color-secondary: #0d9488;
-    --color-accent: #fbbf24;
+/*
+ * Dark mode is a separate tonal set, not an inversion. The vivid hues need no
+ * darkening here — they are already high contrast against a near-black ground,
+ * which is why cyan becomes the primary and carries dark text instead of white.
+ *
+ *   #e8edf5 text on #0b1120 ........ ~16:1  ✓
+ *   #22d3ee cyan on #0b1120 ........ 10.42:1  ✓ (safe as text here)
+ *   #a3b2c7 muted on #0b1120 ........ 8.74:1  ✓
+ */
+[data-theme='dark'] {
+  color-scheme: dark;
 
-    --color-border: #1f4a44;
-    --color-border-strong: #35726a;
-    --color-ring: #2dd4bf;
+  --color-background: #0b1120;
+  --color-surface: #131c31;
+  --color-surface-sunken: #0f1727;
+  --color-foreground: #e8edf5;
+  --color-muted: #1c2740;
+  --color-muted-foreground: #a3b2c7;
 
-    --color-destructive: #f87171;
-    --color-success: #4ade80;
-    --color-warning: #fbbf24;
-  }
+  --color-primary: #22d3ee;
+  --color-on-primary: #0b1120;
+  --color-primary-hover: #67e8f9;
+
+  --color-cyan-vivid: #22d3ee;
+  --color-yellow-vivid: #facc15;
+  --color-coral-vivid: #fb7185;
+
+  /* Tints become deep shades so the chip label, which uses --color-foreground,
+     flips to light along with the rest of the theme. */
+  --color-cyan-tint: #113f4d;
+  --color-yellow-tint: #4a3c0b;
+  --color-coral-tint: #4d1f28;
+
+  --color-border: #1c2740;
+  --color-border-strong: #5b6b85;
+  --color-ring: #22d3ee;
+
+  --color-destructive: #fb7185;
+  /* The dark-mode danger colour is light, so its button label must be dark. */
+  --color-on-destructive: #0b1120;
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
 }
 
 /* ── Base ─────────────────────────────────────────────────────────────── */
 
 html {
-  /* Prefer min-h-dvh over 100vh on mobile. */
   -webkit-text-size-adjust: 100%;
 }
 
@@ -168,6 +238,15 @@ a[href] {
 /* Long-form course descriptions and note text. */
 .prose-measure {
   max-width: 68ch;
+}
+
+/*
+ * Chip text colour is a token, not a hardcoded dark, because the tints flip
+ * from pale to deep between themes. In dark mode the chip background is deep
+ * and the text must be light.
+ */
+.chip-text {
+  color: var(--color-foreground);
 }
 
 @media (prefers-reduced-motion: reduce) {

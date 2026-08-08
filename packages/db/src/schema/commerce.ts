@@ -88,6 +88,32 @@ export const payments = pgTable(
       .references(() => profiles.id, { onDelete: 'cascade' }),
     planId: uuid('plan_id').references(() => plans.id),
     courseId: uuid('course_id').references(() => courses.id),
+
+    /**
+     * Who must review this payment.
+     *
+     * Denormalized from courses.teacher_id so the verification queue is a
+     * single indexed read rather than a join, and so a later course transfer
+     * cannot silently move an already-submitted payment into another
+     * teacher's queue.
+     *
+     * NULL means a platform-wide plan (subscription / lifetime_all), which
+     * spans every teacher's catalog and is therefore the Owner's to verify.
+     */
+    reviewerId: uuid('reviewer_id').references(() => profiles.id),
+
+    /** Which number the student was told to send to. Kept so a dispute can be
+     *  settled against what was actually shown at the time. */
+    paymentMethodId: uuid('payment_method_id'),
+
+    /**
+     * Locked when the intent is created, NOT read at approval time.
+     *
+     * Teachers set their own prices and may change them at any moment
+     * (ADR 0002). A student quoted 500 BDT who transfers 500 BDT must be
+     * approved for 500 BDT even if the price moved to 900 while they were at
+     * the shop.
+     */
     amountPoisha: integer('amount_poisha').notNull(),
     currency: char('currency', { length: 3 }).notNull().default('BDT'),
 
@@ -123,6 +149,10 @@ export const payments = pgTable(
       .where(sql`transaction_id IS NOT NULL AND status <> 'rejected'`),
     index('payments_pending_idx').on(t.status, t.submittedAt).where(sql`status = 'pending'`),
     index('payments_student_idx').on(t.studentId, t.createdAt.desc()),
+    /** The teacher's queue: "my pending payments, oldest first". */
+    index('payments_reviewer_pending_idx')
+      .on(t.reviewerId, t.submittedAt)
+      .where(sql`status = 'pending'`),
   ],
 );
 

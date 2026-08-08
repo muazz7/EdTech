@@ -27,3 +27,5 @@ apps/mobile/.flutter-plugins-dependencies
 apps/mobile/ios/Pods/
 
 .claude/
+# Dev script cookie jar (holds a device fingerprint seed)
+scripts/.dev-cookies.json

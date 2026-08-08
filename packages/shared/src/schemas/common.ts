@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PLATFORMS, USER_ROLES } from '../constants.js';
+import { PLATFORMS, USER_ROLES, type Platform } from '../constants.js';
 
 export const uuidSchema = z.string().uuid();
 
@@ -31,17 +31,40 @@ export const paginationSchema = z.object({
 export type Pagination = z.infer<typeof paginationSchema>;
 
 /**
- * Device descriptor sent on every login. `fingerprint` is deliberately coarse
- * (Section 6.3): mobile sends a stable install ID, web sends a random ID held
- * in an httpOnly cookie plus a UA hash. Aggressive browser fingerprinting is
- * fragile and produces false positives that punish real students.
+ * Device descriptor sent on every login. Deliberately coarse (Section 6.3):
+ * aggressive browser fingerprinting is fragile and produces false positives
+ * that punish real students.
+ *
+ * `fingerprint` is REQUIRED on android/ios, where the app registers a stable
+ * install ID, and OMITTED on web. Section 6.3 specifies the web fingerprint as
+ * a random ID in an httpOnly cookie plus a UA hash — httpOnly means page
+ * scripts cannot read it, so the server derives it and the client never sends
+ * one. A web client that supplies a fingerprint is rejected rather than
+ * trusted: accepting it would let a sharer rotate the value to evade the
+ * device-switch budget.
  */
-export const deviceSchema = z.object({
-  fingerprint: z.string().min(8).max(200),
-  label: z.string().max(120).optional(),
-  platform: platformSchema,
-});
+export const deviceSchema = z
+  .object({
+    fingerprint: z.string().min(8).max(200).optional(),
+    label: z.string().max(120).optional(),
+    platform: platformSchema,
+  })
+  .refine((d) => d.platform === 'web' || Boolean(d.fingerprint), {
+    message: 'A device fingerprint is required on mobile.',
+    path: ['fingerprint'],
+  })
+  .refine((d) => d.platform !== 'web' || !d.fingerprint, {
+    message: 'Web clients must not supply a device fingerprint; the server derives it.',
+    path: ['fingerprint'],
+  });
 export type DeviceInput = z.infer<typeof deviceSchema>;
+
+/** Resolved server-side before reaching establishSession. */
+export type ResolvedDevice = {
+  fingerprint: string;
+  label?: string;
+  platform: Platform;
+};
 
 /** All responses are { data, error, meta }. */
 export type ApiEnvelope<T> = {

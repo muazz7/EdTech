@@ -5,15 +5,43 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1786176917549,
-      "tag": "0000_stale_smiling_tiger",
+      "when": 1786183928529,
+      "tag": "0000_misty_champions",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
-      "when": 1786176937032,
+      "when": 1786183930263,
       "tag": "0001_auth_fk_and_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786187153199,
+      "tag": "0002_sad_flatman",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786187165936,
+      "tag": "0003_rls_refresh_device",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786198141740,
+      "tag": "0004_salty_puff_adder",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786198156257,
+      "tag": "0005_rls_payment_methods",
       "breakpoints": true
     }
   ]

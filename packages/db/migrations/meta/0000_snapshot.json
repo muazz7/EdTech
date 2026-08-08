@@ -1,5 +1,5 @@
 {
-  "id": "c6f0776e-c9a9-4426-8637-c8f8f36cae3c",
+  "id": "981de731-a084-4fbd-9035-a60e9b9597e7",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -836,6 +836,18 @@
           "primaryKey": false,
           "notNull": true
         },
+        "mime_type": {
+          "name": "mime_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "file_size_bytes": {
+          "name": "file_size_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
         "width": {
           "name": "width",
           "type": "integer",
@@ -847,6 +859,13 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
         }
       },
       "indexes": {},
@@ -876,65 +895,6 @@
           ]
         }
       },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.note_sources": {
-      "name": "note_sources",
-      "schema": "",
-      "columns": {
-        "lesson_id": {
-          "name": "lesson_id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "content_json": {
-          "name": "content_json",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "render_status": {
-          "name": "render_status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'pending'"
-        },
-        "rendered_at": {
-          "name": "rendered_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "note_sources_lesson_id_lessons_id_fk": {
-          "name": "note_sources_lesson_id_lessons_id_fk",
-          "tableFrom": "note_sources",
-          "tableTo": "lessons",
-          "columnsFrom": [
-            "lesson_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false

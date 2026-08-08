@@ -16,6 +16,10 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   reactStrictMode: true,
 
+  // Hides the floating dev-mode badge so it does not sit over the UI while
+  // reviewing layouts. Development only — it never ships to production anyway.
+  devIndicators: false,
+
   // packages/* ship TypeScript source, not build output.
   transpilePackages: ['@edtech/core', '@edtech/db', '@edtech/shared'],
 
@@ -38,6 +42,17 @@ const nextConfig: NextConfig = {
       ...config.resolve.extensionAlias,
       '.js': ['.ts', '.tsx', '.js'],
     };
+
+    // The packages publish a "source" export condition pointing at their
+    // TypeScript. Preferring it here keeps hot reload working when a package
+    // changes, while plain Node — the test runner and scripts/ — falls through
+    // to the compiled dist, which it can actually execute.
+    //
+    // '...' is webpack's placeholder for the defaults of THIS build. Spelling
+    // the list out by hand instead leaks 'node' into the browser bundle, which
+    // makes packages with server/client conditional exports (@sentry/nextjs)
+    // resolve to their server entry and fail on `require('module')`.
+    config.resolve.conditionNames = ['source', '...'];
     return config;
   },
 };
