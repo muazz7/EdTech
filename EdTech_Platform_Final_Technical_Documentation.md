@@ -1629,4 +1629,3 @@ PAYMENT_GRACE_PERIOD_DAYS=3
 
 ---
 
-*End of specification. Sections marked **[CONFIRM]** need your input before implementation begins; everything else is ready to build against.*
