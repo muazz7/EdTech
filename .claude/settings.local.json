@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "PowerShell($dir = \"C:\\\\Users\\\\USER\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\f--My-Projects-EdTech\\\\c11dad7c-7d92-4bcd-881c-5a86baf67dc2\\\\scratchpad\"; Invoke-WebRequest -Uri \"https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.ps1\" -OutFile \"$dir\\\\install.ps1\" -UseBasicParsing; Get-Item \"$dir\\\\install.ps1\" | Select-Object Name,Length)",
+      "PowerShell(node --version)",
+      "PowerShell($dir = \"C:\\\\Users\\\\USER\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\f--My-Projects-EdTech\\\\c11dad7c-7d92-4bcd-881c-5a86baf67dc2\\\\scratchpad\"; git clone --depth 1 https://github.com/JuliusBrussee/caveman.git \"$dir\\\\caveman\" 2>&1 | Select-Object -Last 3)",
+      "PowerShell(python --version)"
+    ]
+  }
+}

@@ -1,0 +1,75 @@
+import tseslint from 'typescript-eslint';
+
+export default tseslint.config(
+  {
+    ignores: ['**/node_modules/**', '**/dist/**', '**/.next/**', '**/migrations/**'],
+  },
+
+  ...tseslint.configs.recommended,
+
+  /**
+   * The escape hatch in Section 3.2 is only real while packages/core stays
+   * framework-agnostic. If it can lift into a Hono or Fastify service on
+   * Render unchanged, outgrowing Vercel is a weekend rather than a rewrite.
+   *
+   * That property decays silently — one `import { cookies } from 'next/headers'`
+   * for convenience and it is gone. This rule is what stops it.
+   */
+  {
+    files: ['packages/core/**/*.ts', 'packages/shared/**/*.ts', 'packages/db/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['next', 'next/*', 'react', 'react-dom', 'react/*'],
+              message:
+                'packages/* must stay framework-agnostic (Section 3.2). Keep framework code in apps/web and pass plain values in.',
+            },
+            {
+              group: ['@/*'],
+              message: 'The @/* alias belongs to apps/web. Use a relative import here.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  /**
+   * The service role key and the VdoCipher secret must never reach a client
+   * bundle (Section 17.6) — either one exposes the entire content library.
+   */
+  {
+    files: ['apps/web/src/**/*.tsx'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@/lib/supabase',
+              message:
+                'supabaseAdmin holds the service role key. Server-side only — never import it into a component file.',
+            },
+            {
+              name: '@edtech/db',
+              message:
+                'Query through /api/v1, not directly from a component (Section 3.3).',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  {
+    rules: {
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
+    },
+  },
+);

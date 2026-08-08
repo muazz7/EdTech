@@ -1,0 +1,27 @@
+node_modules/
+.next/
+dist/
+build/
+out/
+*.tsbuildinfo
+
+.env
+.env.local
+.env.*.local
+!.env.example
+
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+
+coverage/
+.vercel
+.turbo
+
+# Flutter (apps/mobile, added in Phase 4)
+apps/mobile/build/
+apps/mobile/.dart_tool/
+apps/mobile/.flutter-plugins
+apps/mobile/.flutter-plugins-dependencies
+apps/mobile/ios/Pods/

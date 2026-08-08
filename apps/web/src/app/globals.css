@@ -1,0 +1,182 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens — Master EdTech Platform.
+ *
+ * Palette is education teal + course amber. Contrast ratios below are computed
+ * against WCAG 2.1 relative luminance, not assumed:
+ *
+ *   #0F766E on #FFFFFF ............ 5.47:1  AA body text        ✓
+ *   #0D9488 on #FFFFFF ............ 3.74:1  UI glyphs / charts only
+ *   #D97706 on #FFFFFF ............ 3.19:1  large text / glyphs only
+ *   #2F5F5A on #F0FDFA ............ 6.93:1  AA secondary text   ✓
+ *   #E6FFFA on #0A1D1B ........... 16.6:1  AA dark body        ✓
+ *   #2DD4BF on #0A1D1B ............ 9.36:1  AA dark primary     ✓
+ *   #35726A on #0A1D1B ............ 3.13:1  meaningful dark divider
+ *
+ * --color-primary-visual is the brighter teal. It is for chart series, icons
+ * and decorative fills ONLY. Never put text on it and never use it as text.
+ */
+
+@theme {
+  /* ── Typography ────────────────────────────────────────────────────────
+   * Inter carries no Bengali coverage. Teacher-authored course titles, notes
+   * and doubt threads will be Bangla regardless of the UI language, so the
+   * Noto Sans Bengali fallback is load-bearing, not cosmetic.
+   */
+  --font-sans: 'Inter', 'Noto Sans Bengali', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;      /* 16px minimum on mobile — smaller triggers iOS auto-zoom */
+  --text-lg: 1.125rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 2rem;
+  --text-3xl: 2.5rem;
+
+  /* ── Light palette ─────────────────────────────────────────────────── */
+  --color-background: #f0fdfa;
+  --color-surface: #ffffff;
+  --color-foreground: #134e4a;
+  --color-muted: #e8f1f4;
+  --color-muted-foreground: #2f5f5a;
+
+  --color-primary: #0f766e;
+  --color-primary-visual: #0d9488;
+  --color-on-primary: #ffffff;
+  --color-secondary: #2dd4bf;
+  --color-accent: #d97706;
+
+  --color-border: #c9e9e3;
+  --color-border-strong: #5eead4;
+  --color-ring: #0f766e;
+
+  --color-destructive: #dc2626;
+  --color-success: #15803d;
+  --color-warning: #b45309;
+
+  /* ── Spacing — 4/8px rhythm ────────────────────────────────────────── */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+
+  /* ── Motion — 150–300ms, ease-out entering, ease-in exiting ────────── */
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+  --duration-slow: 300ms;
+  --ease-enter: cubic-bezier(0, 0, 0.2, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  /* ── Elevation ─────────────────────────────────────────────────────── */
+  --shadow-sm: 0 1px 2px rgb(19 78 74 / 0.06);
+  --shadow-md: 0 4px 6px rgb(19 78 74 / 0.07);
+  --shadow-lg: 0 10px 20px rgb(19 78 74 / 0.09);
+
+  /* ── z-index scale ─────────────────────────────────────────────────── */
+  --z-base: 0;
+  --z-dropdown: 10;
+  --z-sticky: 20;
+  --z-overlay: 40;
+  --z-modal: 100;
+  --z-toast: 1000;
+
+  /* Minimum touch target. 44px is the Apple floor; Material asks 48dp. */
+  --touch-target: 44px;
+}
+
+/*
+ * Dark mode is a separate tonal set, not an inversion. Contrast is verified
+ * independently — light-mode ratios do not carry over.
+ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-background: #0a1d1b;
+    --color-surface: #12302c;
+    --color-foreground: #e6fffa;
+    --color-muted: #12302c;
+    --color-muted-foreground: #99f6e4;
+
+    --color-primary: #2dd4bf;
+    --color-primary-visual: #5eead4;
+    --color-on-primary: #0a1d1b;
+    --color-secondary: #0d9488;
+    --color-accent: #fbbf24;
+
+    --color-border: #1f4a44;
+    --color-border-strong: #35726a;
+    --color-ring: #2dd4bf;
+
+    --color-destructive: #f87171;
+    --color-success: #4ade80;
+    --color-warning: #fbbf24;
+  }
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────── */
+
+html {
+  /* Prefer min-h-dvh over 100vh on mobile. */
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: 1.6;
+  /* Removes the 300ms tap delay without disabling pinch-zoom. */
+  touch-action: manipulation;
+}
+
+/* Money in poisha, quiz timers, and data columns must not jitter as digits
+   change width. */
+.tabular,
+[data-numeric] {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Never remove focus rings. Replace them if the default is ugly. */
+:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+button:not(:disabled),
+[role='button']:not([aria-disabled='true']),
+a[href] {
+  cursor: pointer;
+}
+
+:disabled,
+[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Long-form course descriptions and note text. */
+.prose-measure {
+  max-width: 68ch;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
