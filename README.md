@@ -51,10 +51,18 @@ config points at `dist/`, not `src/`.
 ## Verify
 
 ```bash
-npx tsc --build                # all three packages
-npm run build --workspace=@edtech/web
-npx eslint packages apps/web/src
+npm run typecheck              # all three packages
+npm run lint
+npm test
+npm run contrast
+npm run build:verify           # NOT `npm run build` while a dev server is up
 ```
+
+`build:verify` builds into `.next-verify`. `next build` and `next dev` share
+`.next` by default, so a production build run against a live dev server wipes
+the dev server's output and every request 500s until it recompiles — which is
+indistinguishable from an intermittent smoke-test failure, and was in fact the
+cause of one. Deployment leaves `NEXT_DIST_DIR` unset and builds into `.next`.
 
 ## Cron
 
@@ -98,17 +106,30 @@ with `DATABASE_POOL_MAX`.
 ## Scripts
 
 ```bash
-npm test                                 # 81 unit/integration tests against the DB
-node scripts/db-check.mjs                # tables, RLS, policies, sessions, stuck backends
-node scripts/db-check.mjs --kill-idle    # clear idle-in-transaction backends (DEV ONLY)
-node scripts/db-check.mjs --reset-devices # clear the device-switch budget (DEV ONLY)
-node scripts/two-device-test.mjs         # credential lifecycle over HTTP
-node scripts/builder-smoke.mjs           # teacher course builder end to end
-node scripts/payments-smoke.mjs          # payment settings + verification queue
-node scripts/contrast-check.mjs          # design tokens vs WCAG (no server needed)
+npm test                  # 199 unit/integration tests against the DB
+npm run db:check          # tables, RLS, policies, sessions, stuck backends
+npm run audit:rls         # what the PUBLISHED anon key can actually read
+npm run smoke:devices     # credential lifecycle over HTTP
+npm run smoke:builder     # teacher course builder end to end
+npm run smoke:payments    # purchase loop, settings, verification queue
+npm run smoke:catalog     # public catalog, lock flags, progress, account
+npm run smoke:assessment  # quizzes, answer-key leak, assignments, certificates
+npm run contrast          # design tokens vs WCAG (no server needed)
+
+# DEV ONLY flags, no npm alias on purpose — reach for these deliberately
+node scripts/db-check.mjs --kill-idle      # clear idle-in-transaction backends
+node scripts/db-check.mjs --reset-devices  # clear the device-switch budget
 ```
 
-All three HTTP suites share ONE cookie jar (`dev-web`). That is deliberate:
+`audit:rls` earns its own script because RLS is not cosmetic here. Supabase's
+default template grants `anon` and `authenticated` SELECT on tables in the public
+schema, and the anon key ships in the client bundle — so a public-schema table
+without RLS is readable by anyone on the internet, through PostgREST, without
+ever touching this API. The script checks both halves: which tables have RLS off,
+and what the published anon key can *actually* read. Before migration 0006 the
+answer to the second question included `courses`, `modules` and `lessons`.
+
+All five HTTP suites share ONE cookie jar (`dev-web`). That is deliberate:
 each jar is a distinct device fingerprint, and three separate jars burned the
 4-per-30-days budget in a single sitting. Sharing one makes them all "the same
 browser", which is what they actually are. `two-device-test.mjs` still exercises
@@ -121,7 +142,7 @@ making a label unreadable. It also asserts the *inverse*: the vivid hues must
 stay **below** 4.5:1 on the page background, because a vivid token that became
 readable has stopped being vivid and the palette has drifted back to muted.
 
-The last two need the dev server. Both persist cookies to
+The smoke suites need the dev server. All persist cookies to
 `scripts/.dev-cookies.json`, which is **load-bearing**: the web device
 fingerprint is derived from an httpOnly cookie plus the UA (Section 6.3), so a
 script that discards cookies presents a new device on every run and exhausts the
@@ -381,17 +402,170 @@ approves, student gains access. The student's session is minted directly
 exists and the teacher holds it; everything after authentication is real, and
 the auth path itself is covered by `two-device-test.mjs`.
 
+Roster and manual grants:
+
+- `/teacher/courses/:id/students` — who bought the course or was given access,
+  with the source, dates and any note. Revoking asks for a reason and takes
+  effect on the student's next playback request.
+- Granting is two steps: **exact-phone lookup**, then confirm. Exact match only
+  — a fuzzy search would let any teacher browse the whole platform's student
+  list, including other teachers' customers. It is still an "is this number
+  registered?" oracle, so it is rate limited and returns only what is needed to
+  confirm the right person. `POST`, not `GET`, so the number stays out of server
+  logs and browser history.
+- The roster states plainly that platform-wide plan holders can also watch and
+  are **not** listed. A teacher seeing an empty roster while subscribers watch
+  would otherwise draw the wrong conclusion about their course.
+
 Not built yet in Phase 2:
 
 - Expiry reminders and the grace period (Section 8.3)
-- Student roster / manual-grant UI (the endpoints exist and are tested)
 - Plan purchase UI (single-course only so far; `plans` has no admin screen)
+
+## Phase 3 status (Student experience)
+
+The first **public** surface in the codebase. That changes the rules: there is
+no session to scope a query by, so every catalog read has to be safe for a
+stranger to make. Two invariants run through it, both tested:
+
+- Only `state = 'published'` is ever visible. A draft course answers **404,
+  identical to a course that does not exist** — any other response confirms to a
+  stranger that a teacher is preparing something.
+- Nothing returns a media handle, and a locked lesson's **duration is withheld**.
+  Titles are public on purpose: the curriculum is the sales pitch, and a paywall
+  that hides what it is selling does not convert. Runtime has value on its own.
+
+Done:
+
+- `/` catalog with search and level/subject facets, derived from live data
+- `/courses/:slug` detail with the full curriculum and per-lesson lock flags
+  (`optionalGuard` — a stranger sees everything locked, a student sees what they
+  can open)
+- `/free` Free Resource Center, watchable signed out
+- `/my-courses` with progress bars and continue-where-you-left-off
+- Progress tracking with the Section 14 anti-gaming rule, reported from both
+  the video player and the document viewer
+- `/account` with the signed-in device, the device-switch budget and
+  entitlement status
+- `/account/notifications` plus an unread badge in the header
+
+**Anti-gaming** is the substantive part. A heartbeat whose position advanced
+faster than wall-clock x playback rate x 1.2 earns no watch credit, so seeking
+to the end cannot fake completion — and the same behaviour is what a catalog
+ripper looks like (Section 17.5). The comparison uses the **server's** clock
+delta; a client that could supply its own elapsed time could claim any amount of
+it. 2x playback is explicitly still legitimate.
+
+That delta is also **clamped** two ways, both of which were holes until the
+client started reporting for real:
+
+- The gap between reports is capped at `MAX_PROGRESS_GAP_SECONDS` (120). Left
+  uncapped, a lesson opened and abandoned overnight would let one seek to the
+  end sit inside an allowance of 86400 seconds and credit the whole video.
+- A **first** report is measured against one flush interval rather than credited
+  at face value. Otherwise a single request completes any lesson: open, seek to
+  90%, done.
+
+Videos complete at **90% watched, not 100%** — students skip outros, and
+requiring 100% strands them one lesson short of a certificate. Documents
+complete on dwell instead, which is why the viewer reports accumulated dwell
+seconds as `position`: a page number would make the anti-gaming comparison
+meaningless.
+
+Progress reporting batches two heartbeats per request (Section 18) and flushes
+on pause, on `ended`, and on `visibilitychange`. The last one uses `fetch`
+with `keepalive`, not `sendBeacon` — a beacon sends cookies but no custom
+headers, and every endpoint here needs `Authorization` and `X-Session-Id`.
+
+A teacher previewing their own lesson reports **nothing**. Writing
+`lesson_progress` rows for them would corrupt every completion figure the course
+reports.
+
+Not built yet in Phase 3:
+
+- The DOM-level playback wiring is verified only by typecheck, lint and build.
+  The heartbeat interval, the visibility flush and the VdoCipher event names
+  have never run in a browser, and the vendor event surface cannot be exercised
+  at all without credentials. It is read defensively — an unexpected shape stops
+  progress reporting rather than breaking playback — but it is unproven.
 
 **Never executed against the real vendors.** VdoCipher and R2 have no
 credentials yet, so both adapters are unit-tested behind a fake and verified
 only by compilation. Every integration in this project has surfaced at least one
 surprise on first real contact; expect the same, particularly for the presigned
 PUT, where signed-header pinning either works exactly or fails opaquely.
+
+## Phase 4 status (Assessment)
+
+Quizzes, assignments and certificates. Backend and the public verification page;
+the teacher builder and student attempt UIs are not built yet.
+
+**The rule this phase is organised around:** `is_correct` never leaves the server
+before submission. Section 10 calls it out as the mistake most quiz
+implementations make — the answer key sits in the network response for the whole
+attempt, and any student who opens devtools has a perfect score. It is invisible
+in a UI review, because the key is in the payload rather than on the screen.
+
+Two structural choices enforce it:
+
+- The teacher path (`quiz-builder.ts`) and the student path (`quiz-attempt.ts`)
+  are **separate modules**. The builder returns the key freely, because a builder
+  cannot author without it. The attempt module never selects `is_correct` into a
+  returned value. One shared "get quiz" helper with an `includeAnswers` flag is
+  how this eventually gets called with the default from a student route.
+- `assessment-smoke.mjs` asserts on the **raw response body**, not the parsed
+  object — `attempt.raw.includes('isCorrect')` is false, and so is the
+  explanation text. That is the bytes the browser receives, which is where a leak
+  would actually be.
+
+Time is server-owned. `started_at` is written by the database, the limit is
+checked against it on submit with a 30-second grace, and the countdown the
+student sees is decoration. Answers arriving after the grace window count as
+unanswered rather than voiding the attempt — discarding it would be
+indistinguishable from losing it to a bad connection, and Section 1.4 names
+uneven connectivity as a constraint.
+
+Marks are integer hundredths end to end (`packages/shared/src/marks.ts`). A quiz
+totalling 12.3 that computes 12.299999 fails a pass mark it should clear, and
+pass/fail decides whether a certificate is issued.
+
+Certificate numbers carry **32 random bits**, not a sequence. The verification
+page is public and unauthenticated — that is the point of a certificate — so a
+sequential number turns it into an enumeration endpoint that leaks every
+student's name and course. Revocation reports `revoked` rather than 404ing: "this
+was revoked" and "this never existed" are different claims and an employer needs
+the right one.
+
+An attempt with outstanding written answers reports `passed: null`, not `false`.
+Showing a student a fail computed from half a score and then changing it is worse
+than showing "being graded".
+
+Not built yet in Phase 4:
+
+- Teacher quiz builder UI, student attempt UI, grading queue UI, certificate list
+- Certificate PDF generation (Section 13 wants pdf-lib into R2; no R2
+  credentials yet, so there is no PDF and `pdf_r2_key` stays null)
+- `CRON_SECRET` is unset in `.env.local`, so every `/cron/*` route answers 503
+  (`assertCronRequest` fails closed). Certificates will not issue automatically
+  until it is set. `smoke:assessment` reports this as a SKIP rather than passing
+  quietly.
+
+## Row level security was not doing anything for ten tables
+
+Found while surveying for Phase 4, fixed in
+[migration 0006](packages/db/migrations/0006_rls_assessment.sql).
+
+`courses`, `modules`, `notifications`, `quiz_questions`, `quiz_attempts`,
+`quiz_answers`, `assignment_submissions`, `course_completion_rules`, `plans` and
+`doubt_replies` had RLS switched off entirely. Supabase grants `anon` SELECT on
+public-schema tables by default and the anon key ships in the client bundle, so
+`npm run audit:rls` confirmed the published key could read `courses`, `modules`
+and `lessons` directly through PostgREST.
+
+The Phase 3 invariant that a draft course answers 404 was being enforced **only
+by the API**, and PostgREST goes around the API. `lessons_read` also allowed any
+free lesson, including free lessons of an unreleased course. Both are closed, and
+`audit:rls` now asserts the draft rule at the database rather than at the API.
 
 ## Decisions
 
@@ -407,6 +581,9 @@ they conflict:
 - **[ADR 0003](docs/adr/0003-teacher-collected-payments.md)** — teachers publish
   their own bKash/Nagad/Rocket numbers, verify their own course payments, and
   grant access by hand. Money never transits the platform.
+- **[ADR 0004](docs/adr/0004-assignment-resubmission-locks-on-grading.md)** —
+  assignment resubmission is open until a teacher awards a mark, then locked.
+  Takes Section 11's stated default rather than overriding it.
 
 Still open, from Section 22.1:
 

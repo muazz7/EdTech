@@ -62,6 +62,16 @@ type RequestOptions = {
   body?: unknown;
   /** Set internally to stop a refresh loop. */
   skipRefresh?: boolean;
+  /**
+   * Lets the request outlive the page (fetch keepalive). Used for the final
+   * progress flush when a student closes the tab mid-lesson.
+   *
+   * sendBeacon cannot do this job: it sends cookies but no custom headers, and
+   * every endpoint here requires Authorization and X-Session-Id. keepalive
+   * keeps the headers. Bodies are capped at 64KB by the browser, which the
+   * batched progress payload is nowhere near.
+   */
+  keepalive?: boolean;
 };
 
 async function raw<T>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -74,6 +84,7 @@ async function raw<T>(path: string, options: RequestOptions = {}): Promise<T> {
     method: options.method ?? 'GET',
     headers,
     credentials: 'include',
+    ...(options.keepalive ? { keepalive: true } : {}),
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
 
@@ -136,6 +147,10 @@ export async function bootstrap(): Promise<boolean> {
 export const api = {
   get: <T>(path: string) => raw<T>(path),
   post: <T>(path: string, body?: unknown) => raw<T>(path, { method: 'POST', body: body ?? {} }),
+  /** POST that survives the page being closed. Best-effort by definition: a
+   *  keepalive request cannot be retried, so a 401 here is simply lost. */
+  postKeepalive: <T>(path: string, body: unknown) =>
+    raw<T>(path, { method: 'POST', body, keepalive: true, skipRefresh: true }),
   patch: <T>(path: string, body: unknown) => raw<T>(path, { method: 'PATCH', body }),
   put: <T>(path: string, body: unknown) => raw<T>(path, { method: 'PUT', body }),
   del: <T>(path: string) => raw<T>(path, { method: 'DELETE' }),

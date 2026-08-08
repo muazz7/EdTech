@@ -95,15 +95,24 @@ export default function CourseBuilderPage() {
 
       {course && (
         <>
-          <div className="mt-3 flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-semibold text-[var(--color-foreground)]">
-              {course.title}
-            </h1>
-            {course.state === 'published' ? (
-              <Badge tone="success">Published</Badge>
-            ) : (
-              <Badge tone="info">Draft</Badge>
-            )}
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <h1 className="text-2xl font-semibold text-[var(--color-foreground)]">
+                {course.title}
+              </h1>
+              {course.state === 'published' ? (
+                <Badge tone="success">Published</Badge>
+              ) : (
+                <Badge tone="info">Draft</Badge>
+              )}
+            </div>
+
+            <Link
+              href={`/teacher/courses/${courseId}/students`}
+              className="inline-flex min-h-11 items-center rounded-[var(--radius-md)] border border-[var(--color-border-strong)] px-4 text-sm font-medium text-[var(--color-foreground)] transition-colors duration-150 hover:bg-[var(--color-muted)]"
+            >
+              Students
+            </Link>
           </div>
 
           <CourseSettings course={course} onSaved={setCourse} />

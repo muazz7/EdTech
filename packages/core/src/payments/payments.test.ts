@@ -521,7 +521,11 @@ describe('manual grant boundaries', () => {
       () => grantAccess(alice, { studentId: student.id, kind: 'lifetime_all' }),
       (err: unknown) => {
         assert.ok(err instanceof ApiError);
-        assert.ok(err.status === 403 || err.status === 422);
+        // Specifically 403, not a 422 about a missing course: the refusal must
+        // name the real reason, or a teacher reads it as "pick a course and
+        // you'll get all-access".
+        assert.equal(err.status, 403);
+        assert.equal(err.code, 'FORBIDDEN');
         return true;
       },
     );

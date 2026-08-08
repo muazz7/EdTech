@@ -16,6 +16,13 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   reactStrictMode: true,
 
+  // `next build` and `next dev` share .next by default, so running a
+  // production build while a dev server is live wipes the dev server's output
+  // and every request 500s until it recompiles. That looked exactly like an
+  // intermittent smoke-test failure. Verification builds set NEXT_DIST_DIR to
+  // keep out of the way; deployment leaves it unset and uses .next.
+  distDir: process.env.NEXT_DIST_DIR ?? '.next',
+
   // Hides the floating dev-mode badge so it does not sit over the UI while
   // reviewing layouts. Development only — it never ships to production anyway.
   devIndicators: false,

@@ -320,6 +320,75 @@ try {
   const noEnt = await sql`SELECT id FROM entitlements WHERE student_id = ${second.id}`;
   check('rejection issues nothing', noEnt.length, 0);
 
+  console.log('\n--- 11. roster and manual grant ---');
+  const rosterPage = await fetch(`${PAGE_BASE}/teacher/courses/${courseId}/students`);
+  check('roster page renders', rosterPage.status, 200);
+
+  const roster = await call(`/teacher/courses/${courseId}/students`);
+  check('roster loads', roster.status, 200);
+  check(
+    'the paying student is listed',
+    roster.data?.find((r) => r.studentId === studentId)?.source,
+    'purchase',
+  );
+
+  // Exact-match lookup only: a fuzzy search would let any teacher browse the
+  // whole platform's student list.
+  const lookup = await call('/teacher/students/lookup', {
+    method: 'POST',
+    body: { phone: second.phone },
+  });
+  check('lookup finds the student', lookup.status, 200);
+  check('lookup returns the right person', lookup.data?.id, second.id);
+
+  const missing = await call('/teacher/students/lookup', {
+    method: 'POST',
+    body: { phone: '01999999999' },
+  });
+  check('unknown number returns 404', missing.status, 404);
+
+  const granted = await call('/teacher/access', {
+    method: 'POST',
+    body: { studentId: second.id, courseId, note: 'Paid cash at the centre' },
+  });
+  check('manual grant succeeds', granted.status, 201);
+  check('grant is single_course', granted.data?.kind, 'single_course');
+
+  const grantSource = await sql`
+    SELECT source, notes FROM entitlements WHERE id = ${granted.data.entitlementId}`;
+  check('recorded as a manual grant', grantSource[0]?.source, 'manual_grant');
+  check('note kept on the record', grantSource[0]?.notes, 'Paid cash at the centre');
+
+  const audited = await sql`
+    SELECT action FROM audit_log WHERE entity_id = ${granted.data.entitlementId}`;
+  check('grant is audited', audited[0]?.action, 'entitlement.manual_grant');
+
+  const twice = await call('/teacher/access', {
+    method: 'POST',
+    body: { studentId: second.id, courseId },
+  });
+  check('granting the same course twice is refused', twice.status, 409);
+
+  // The boundary from ADR 0003: a teacher must never be able to hand out every
+  // other teacher's catalog.
+  const allAccess = await call('/teacher/access', {
+    method: 'POST',
+    body: { studentId: second.id, kind: 'lifetime_all' },
+  });
+  check('teacher cannot grant all-access', allAccess.status, 403);
+
+  console.log('\n--- 12. revoking removes access ---');
+  const revoked2 = await call(`/teacher/access/${granted.data.entitlementId}`, {
+    method: 'POST',
+    body: { reason: 'Refunded' },
+  });
+  check('revoke succeeds', revoked2.status, 200);
+
+  const afterRevoke = await sql`
+    SELECT revoked_at, revoked_reason FROM entitlements WHERE id = ${granted.data.entitlementId}`;
+  check('marked revoked', Boolean(afterRevoke[0]?.revoked_at), true);
+  check('reason recorded', afterRevoke[0]?.revoked_reason, 'Refunded');
+
   studentId = [studentId, second.id];
 } finally {
   const ids = Array.isArray(studentId) ? studentId : studentId ? [studentId] : [];

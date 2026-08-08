@@ -111,6 +111,42 @@ export const ClipboardIcon = (p: IconProps) => (
   </Svg>
 );
 
+export const BellIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M18 16v-5a6 6 0 1 0-12 0v5l-1.5 2.5h15L18 16Z" />
+    <path d="M10 21h4" />
+  </Svg>
+);
+
+export const DeviceIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="7" y="3" width="10" height="18" rx="2" />
+    <path d="M11 18h2" />
+  </Svg>
+);
+
+export const KeyIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="8" cy="14" r="4" />
+    <path d="m11 11 8-8M17 5l2 2M15 7l2 2" />
+  </Svg>
+);
+
+export const CheckIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m5 13 4 4L19 7" />
+  </Svg>
+);
+
+/** Completion marker. Not colour alone: a green tick is unreadable to a
+ *  red-green colourblind student, so it always sits beside a text label. */
+export const CheckCircleIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="m8.5 12 2.5 2.5 4.5-5" />
+  </Svg>
+);
+
 export const LockIcon = (p: IconProps) => (
   <Svg {...p}>
     <rect x="5" y="11" width="14" height="10" rx="2" />

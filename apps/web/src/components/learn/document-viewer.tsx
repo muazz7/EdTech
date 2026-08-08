@@ -1,9 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { DOCUMENT_DWELL_COMPLETE_SECONDS } from '@edtech/shared';
 import { api } from '@/lib/client/api-client';
 import { Button, ErrorNote, Skeleton } from '@/components/ui';
 import { fetchBytes, stampWatermark, type DocumentWatermark } from './watermark';
+import { useProgressReporter, type ProgressSnapshot } from './use-progress-reporter';
 
 /**
  * Canvas viewer for PDFs, images and uploaded note pages (Section 9.2,
@@ -36,12 +38,21 @@ type NotePagesGrant = {
  *  bitmap on a low-end phone. */
 const MAX_CANVAS_WIDTH = 1600;
 
+/** How often dwell is added up. Short enough that a student who reads for 20
+ *  seconds and leaves still gets credited for it. */
+const DWELL_TICK_SECONDS = 5;
+
 export function DocumentViewer({
   lessonId,
   kind,
+  trackProgress = true,
+  onProgress,
 }: {
   lessonId: string;
   kind: 'asset' | 'note-pages';
+  /** False for a teacher previewing their own lesson. */
+  trackProgress?: boolean;
+  onProgress?: (snapshot: ProgressSnapshot) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -89,6 +100,12 @@ export function DocumentViewer({
     void render();
   }, [render, attempt]);
 
+  useDwellProgress({
+    lessonId,
+    enabled: trackProgress && status === 'ready',
+    ...(onProgress ? { onProgress } : {}),
+  });
+
   return (
     <div className="flex flex-col gap-3">
       {status === 'loading' && (
@@ -131,6 +148,65 @@ export function DocumentViewer({
       </p>
     </div>
   );
+}
+
+/**
+ * Counts time spent with the document open and reports it as `position`.
+ *
+ * Section 14 completes a document on dwell, not on scroll depth: a one-page
+ * formula sheet has no scroll to measure, and a student who reads it for a
+ * minute has finished it. The number sent is seconds, matching what the server
+ * expects for video, so the anti-gaming comparison in `recordProgress` stays
+ * meaningful — dwell can never advance faster than the clock.
+ *
+ * Only counted while the tab is visible. A document left open in a background
+ * tab overnight is not ten hours of study.
+ */
+function useDwellProgress({
+  lessonId,
+  enabled,
+  onProgress,
+}: {
+  lessonId: string;
+  enabled: boolean;
+  onProgress?: (snapshot: ProgressSnapshot) => void;
+}) {
+  const dwell = useRef(0);
+  const reporter = useProgressReporter({
+    lessonId,
+    enabled,
+    ...(onProgress ? { onSaved: onProgress } : {}),
+  });
+  const reporterRef = useRef(reporter);
+  reporterRef.current = reporter;
+
+  useEffect(() => {
+    dwell.current = 0;
+  }, [lessonId]);
+
+  useEffect(() => {
+    if (!enabled) return;
+
+    const tick = setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      dwell.current += DWELL_TICK_SECONDS;
+      reporterRef.current.track('heartbeat', dwell.current);
+    }, DWELL_TICK_SECONDS * 1000);
+
+    // The reporter's own flush runs every 30 seconds, which would leave a
+    // document that completes at 10 seconds of dwell looking unfinished to a
+    // student who reads it and leaves. One extra flush just past the threshold
+    // fixes that without doubling the request rate for everyone else.
+    const settle = setTimeout(
+      () => reporterRef.current.flush(),
+      (DOCUMENT_DWELL_COMPLETE_SECONDS + DWELL_TICK_SECONDS) * 1000,
+    );
+
+    return () => {
+      clearInterval(tick);
+      clearTimeout(settle);
+    };
+  }, [enabled, lessonId]);
 }
 
 async function drawImage(

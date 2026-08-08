@@ -1,5 +1,8 @@
 node_modules/
 .next/
+# Output dir for `npm run build:verify`, which builds without disturbing a
+# running dev server.
+.next-verify/
 dist/
 build/
 out/

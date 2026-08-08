@@ -6,10 +6,11 @@ import { useParams } from 'next/navigation';
 import { formatPoisha } from '@edtech/shared';
 import { ApiClientError, api } from '@/lib/client/api-client';
 import { AuthProvider, useAuth } from '@/components/auth-provider';
-import { Badge, Card, EmptyState, ErrorNote, Skeleton } from '@/components/ui';
-import { LessonTypeIcon, LockIcon } from '@/components/icons';
+import { Badge, Card, EmptyState, ErrorNote, ProgressBar, Skeleton } from '@/components/ui';
+import { CheckCircleIcon, LessonTypeIcon, LockIcon } from '@/components/icons';
 import { DrmPlayer } from '@/components/learn/drm-player';
 import { DocumentViewer } from '@/components/learn/document-viewer';
+import type { ProgressSnapshot } from '@/components/learn/use-progress-reporter';
 
 type LessonView = {
   id: string;
@@ -35,6 +36,14 @@ type Paywall = {
   courseSlug: string;
   pricePoisha: number;
   isInAllAccess: boolean;
+};
+
+type CourseProgress = {
+  lessons: Array<{ lessonId: string; lastPosition: number; isComplete: boolean }>;
+  totalLessons: number;
+  completedLessons: number;
+  percent: number;
+  nextLesson: { id: string; title: string } | null;
 };
 
 /** Explains WHY a lesson is locked, because "no access" and "your subscription
@@ -70,6 +79,7 @@ function LessonScreen() {
     paywall?: Paywall;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<CourseProgress | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -98,6 +108,41 @@ function LessonScreen() {
   useEffect(() => {
     if (state.status === 'signed-in') void load();
   }, [state.status, load]);
+
+  // A second request rather than fields on the lesson: this is the whole
+  // course's progress, and it drives the resume position, the bar and the
+  // ticks beside the sibling lessons.
+  const courseId = lesson?.courseId ?? null;
+  const loadProgress = useCallback(() => {
+    if (!courseId) return;
+    void api
+      .get<CourseProgress>(`/me/progress/${courseId}`)
+      .then(setProgress)
+      // Progress is an enhancement. Failing to load it must not stop the
+      // student from watching the lesson they came for.
+      .catch(() => setProgress(null));
+  }, [courseId]);
+
+  useEffect(loadProgress, [loadProgress]);
+
+  const lessonProgress = progress?.lessons.find((row) => row.lessonId === lessonId) ?? null;
+  const completedIds = new Set(
+    progress?.lessons.filter((row) => row.isComplete).map((row) => row.lessonId) ?? [],
+  );
+
+  // A teacher opening their own lesson is previewing, not studying. Writing
+  // lesson_progress rows for them would corrupt every completion figure the
+  // course reports.
+  const trackProgress = lesson?.via !== 'owner';
+
+  const onProgress = useCallback(
+    (snapshot: ProgressSnapshot) => {
+      // Refetch only on the transition to complete: that is the one moment the
+      // course-level numbers actually change.
+      if (snapshot.isComplete && !lessonProgress?.isComplete) loadProgress();
+    },
+    [lessonProgress?.isComplete, loadProgress],
+  );
 
   if (state.status === 'loading') {
     return (
@@ -181,6 +226,7 @@ function LessonScreen() {
             </h1>
             {lesson.isFree && <Badge tone="info">Free preview</Badge>}
             {lesson.via === 'owner' && <Badge tone="warning">Teacher preview</Badge>}
+            {lessonProgress?.isComplete && <Badge tone="success">Completed</Badge>}
           </div>
 
           {lesson.description && (
@@ -191,11 +237,22 @@ function LessonScreen() {
 
           <div className="mt-6">
             {lesson.type === 'video' && (
-              <DrmPlayer lessonId={lesson.id} videoStatus={lesson.videoStatus} />
+              <DrmPlayer
+                lessonId={lesson.id}
+                videoStatus={lesson.videoStatus}
+                resumePosition={lessonProgress?.isComplete ? null : (lessonProgress?.lastPosition ?? null)}
+                trackProgress={trackProgress}
+                onProgress={onProgress}
+              />
             )}
 
             {(lesson.type === 'pdf' || lesson.type === 'image') && (
-              <DocumentViewer lessonId={lesson.id} kind="asset" />
+              <DocumentViewer
+                lessonId={lesson.id}
+                kind="asset"
+                trackProgress={trackProgress}
+                onProgress={onProgress}
+              />
             )}
 
             {/* A note is either one PDF or N photographed pages (ADR 0001).
@@ -204,6 +261,8 @@ function LessonScreen() {
               <DocumentViewer
                 lessonId={lesson.id}
                 kind={lesson.pageCount && lesson.pageCount > 0 ? 'note-pages' : 'asset'}
+                trackProgress={trackProgress}
+                onProgress={onProgress}
               />
             )}
 
@@ -214,6 +273,29 @@ function LessonScreen() {
               />
             )}
           </div>
+
+          {/* Course-level progress, not this lesson's. A bar that only moves
+              while the video plays tells the student nothing they cannot
+              already see in the scrubber. */}
+          {trackProgress && progress && progress.totalLessons > 0 && (
+            <div className="mt-6">
+              <ProgressBar value={progress.percent} label={`Progress in ${lesson.courseTitle}`} />
+              <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-[var(--color-muted-foreground)]">
+                  <span className="tabular">{progress.completedLessons}</span> of{' '}
+                  <span className="tabular">{progress.totalLessons}</span> lessons complete
+                </p>
+                {progress.nextLesson && progress.nextLesson.id !== lesson.id && (
+                  <Link
+                    href={`/learn/lessons/${progress.nextLesson.id}`}
+                    className="text-sm font-medium text-[var(--color-primary)] hover:underline"
+                  >
+                    Next: {progress.nextLesson.title}
+                  </Link>
+                )}
+              </div>
+            </div>
+          )}
 
           {lesson.siblings.length > 1 && (
             <section className="mt-10">
@@ -238,6 +320,14 @@ function LessonScreen() {
                       />
                       <span className="min-w-0 flex-1">{sibling.title}</span>
                       {sibling.isFree && <Badge tone="neutral">Free</Badge>}
+                      {/* Icon plus text, never the tick alone: a green mark on
+                          its own is invisible to a colourblind student. */}
+                      {completedIds.has(sibling.id) && (
+                        <span className="flex shrink-0 items-center gap-1 text-xs text-[var(--color-success)]">
+                          <CheckCircleIcon className="size-4" />
+                          Done
+                        </span>
+                      )}
                     </Link>
                   </li>
                 ))}

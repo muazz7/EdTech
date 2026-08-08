@@ -9,6 +9,16 @@
       "comment": "03:00 UTC is 09:00 Asia/Dhaka — after the overnight submissions, before the day's reviewing starts.",
       "path": "/api/v1/cron/expire-stale-payments",
       "schedule": "0 3 * * *"
+    },
+    {
+      "comment": "Section 13: evaluates only students whose progress moved in the last window.",
+      "path": "/api/v1/cron/issue-certificates",
+      "schedule": "0 * * * *"
+    },
+    {
+      "comment": "Auto-submits attempts abandoned past 24h so they stop holding one of the student's tries. Offset from the certificate sweep so the two never contend for connections.",
+      "path": "/api/v1/cron/sweep-attempts",
+      "schedule": "30 * * * *"
     }
   ]
 }

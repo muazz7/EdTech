@@ -30,6 +30,15 @@ export async function createStudentSession(sql, userId, role = 'student') {
   if (!secret) throw new Error('JWT_SECRET must be set to mint a test session.');
 
   const sessionId = randomUUID();
+
+  // Revoke first, exactly as login does. `one_live_session_per_user` is a
+  // partial unique index, so inserting a second live session for a user who
+  // already has one is rejected by the database — which is the index working,
+  // not something to route around.
+  await sql`
+    UPDATE active_sessions SET revoked_at = now(), revoked_reason = 'smoke_script'
+    WHERE user_id = ${userId} AND revoked_at IS NULL`;
+
   await sql`
     INSERT INTO active_sessions (id, user_id, device_fingerprint, device_label, platform)
     VALUES (${sessionId}, ${userId}, ${`smoke-${sessionId.slice(0, 8)}`}, 'Smoke script', 'web')`;

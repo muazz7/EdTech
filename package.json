@@ -13,13 +13,22 @@
   "scripts": {
     "dev": "npm run dev --workspace=@edtech/web",
     "build": "npm run build --workspace=@edtech/web",
+    "build:verify": "dotenv -v NEXT_DIST_DIR=.next-verify -- npm run build --workspace=@edtech/web",
     "start": "npm run start --workspace=@edtech/web",
     "typecheck": "tsc --build --verbose",
     "lint": "eslint .",
     "db:generate": "npm run generate --workspace=@edtech/db",
     "db:migrate": "npm run migrate --workspace=@edtech/db",
     "db:studio": "npm run studio --workspace=@edtech/db",
-    "test": "tsc --build && dotenv -e .env.local -- node --test --test-concurrency=1 \"packages/core/dist/**/*.test.js\""
+    "test": "tsc --build && dotenv -e .env.local -- node --test --test-concurrency=1 \"packages/core/dist/**/*.test.js\"",
+    "db:check": "dotenv -e .env.local -- node scripts/db-check.mjs",
+    "contrast": "node scripts/contrast-check.mjs",
+    "smoke:devices": "dotenv -e .env.local -- node scripts/two-device-test.mjs",
+    "smoke:builder": "dotenv -e .env.local -- node scripts/builder-smoke.mjs",
+    "smoke:payments": "dotenv -e .env.local -- node scripts/payments-smoke.mjs",
+    "smoke:catalog": "dotenv -e .env.local -- node scripts/catalog-smoke.mjs",
+    "smoke:assessment": "dotenv -e .env.local -- node scripts/assessment-smoke.mjs",
+    "audit:rls": "dotenv -e .env.local -- node scripts/rls-audit.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

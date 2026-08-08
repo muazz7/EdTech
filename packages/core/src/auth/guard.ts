@@ -65,6 +65,26 @@ async function touchSession(session: ActiveSession): Promise<void> {
 }
 
 /**
+ * Auth for endpoints that serve signed-out visitors too.
+ *
+ * The public catalog is the case: a stranger sees the curriculum with
+ * everything locked, and a signed-in student sees which lessons they can
+ * actually open. A missing or stale credential is not an error there, so this
+ * returns null rather than throwing.
+ *
+ * Never use this to protect anything. A caller that ignores the null gets no
+ * protection at all.
+ */
+export async function optionalGuard(headers: Headers): Promise<GuardResult | null> {
+  if (!headers.get('authorization') || !headers.get('x-session-id')) return null;
+  try {
+    return await guardRequest(headers);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Role gate for /teacher/* and /admin/*. Checks the live profile, not the JWT
  * claim — a demoted teacher holding a 15-minute-old token must lose access
  * now, not when the token expires.

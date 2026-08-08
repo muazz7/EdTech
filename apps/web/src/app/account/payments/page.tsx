@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { formatPoisha } from '@edtech/shared';
 import { api } from '@/lib/client/api-client';
 import { AuthProvider, useAuth } from '@/components/auth-provider';
+import { SiteHeader } from '@/components/site-header';
 import { Badge, Card, EmptyState, ErrorNote, Skeleton } from '@/components/ui';
 
 type PaymentRow = {
@@ -162,6 +163,7 @@ function PaymentsScreen() {
 export default function AccountPaymentsPage() {
   return (
     <AuthProvider>
+      <SiteHeader />
       <PaymentsScreen />
     </AuthProvider>
   );

@@ -61,6 +61,33 @@ export const HEARTBEAT_INTERVAL_SECONDS = 15;
  *  discarded as seek-scrubbing, and doubled as a piracy signal. */
 export const MAX_PLAYBACK_ADVANCE_FACTOR = 1.2;
 export const DOCUMENT_DWELL_COMPLETE_SECONDS = 10;
+/** The client batches two heartbeats into one request. */
+export const PROGRESS_FLUSH_INTERVAL_SECONDS = HEARTBEAT_INTERVAL_SECONDS * 2;
+/**
+ * Longest gap between two reports that still counts as continuous watching.
+ *
+ * Without this cap the anti-gaming allowance grows with idle time: a student
+ * could open a lesson, leave it overnight, and a single seek to the end would
+ * be inside an allowance of 86400 seconds and credit the whole video. Time
+ * away from the page is not watch time, so the gap is clamped.
+ */
+export const MAX_PROGRESS_GAP_SECONDS = 120;
+
+// ── Assessment (Section 10, 11, 13) ─────────────────────────────────────────
+/**
+ * Slack on the server-side time limit.
+ *
+ * The countdown the student sees is decoration; the limit is enforced against
+ * `started_at`. A submit that arrives a few seconds late is a slow connection,
+ * not cheating, and failing it would be indistinguishable from losing the
+ * attempt. Answers arriving after the grace window are marked unanswered
+ * (Section 10) rather than the whole attempt being rejected.
+ */
+export const ATTEMPT_GRACE_SECONDS = 30;
+/** Attempts left open past this are auto-submitted by the cron sweep, so an
+ *  abandoned attempt does not sit forever holding the student's one try. */
+export const ATTEMPT_ABANDON_HOURS = 24;
+export const CERTIFICATE_PREFIX = 'CERT-';
 
 // ── Payments (Section 8) ────────────────────────────────────────────────────
 export const PAYMENT_REFERENCE_PREFIX = 'PAY-';
@@ -81,6 +108,10 @@ export const RATE_LIMITS = {
   signedAssetPerUser: { limit: 120, windowSeconds: 60 * 60 },
   paymentSubmissionPerUser: { limit: 5, windowSeconds: 24 * 60 * 60 },
   doubtPostPerUser: { limit: 10, windowSeconds: 24 * 60 * 60 },
+  /** Exact-phone student lookup. Not in Section 6.4, added because the lookup
+   *  is inherently an "is this number registered?" oracle — the limit is what
+   *  stops it being walked across a range of numbers. */
+  studentLookupPerUser: { limit: 40, windowSeconds: 60 * 60 },
   defaultPerUser: { limit: 300, windowSeconds: 60 },
 } as const;
 

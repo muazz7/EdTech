@@ -1,8 +1,9 @@
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { uuidv7 } from 'uuidv7';
 import { courses, entitlements, getDb, plans, profiles } from '@edtech/db';
-import { ApiError, ERROR_CODES } from '@edtech/shared';
+import { ApiError, ERROR_CODES, RATE_LIMITS } from '@edtech/shared';
 import { recordAudit } from '../audit/log.js';
+import { enforceRate } from '../rate-limit/limiter.js';
 import { requireCourse, type Actor } from '../content/ownership.js';
 
 /**
@@ -58,6 +59,22 @@ export async function grantAccess(actor: Actor, input: ManualGrantInput, ipAddre
     // CHECK enforces this at the database level too.
     expiresAt = kind === 'subscription' ? (input.expiresAt ?? null) : null;
   } else {
+    // Checked BEFORE the missing-course check, so the refusal names the real
+    // reason. Answering "choose one of your courses" to an all-access attempt
+    // implies that picking a course would grant all-access — precisely the
+    // wrong mental model, and the one ADR 0003 exists to prevent.
+    //
+    // Refused rather than silently downgraded for the same reason: a teacher
+    // who believes they granted all-access is wrong about what their students
+    // can see.
+    if (input.kind && input.kind !== 'single_course') {
+      throw new ApiError(
+        403,
+        ERROR_CODES.FORBIDDEN,
+        'Teachers can only grant access to their own individual courses. Platform-wide plans are set by the owner.',
+      );
+    }
+
     if (!input.courseId) {
       throw new ApiError(422, ERROR_CODES.VALIDATION_FAILED, 'Choose one of your courses.');
     }
@@ -67,17 +84,6 @@ export async function grantAccess(actor: Actor, input: ManualGrantInput, ipAddre
     kind = 'single_course';
     courseId = input.courseId;
     expiresAt = null;
-
-    // Ignoring a supplied kind silently would be worse than refusing: a teacher
-    // who believes they granted all-access has a wrong mental model of what
-    // their students can see.
-    if (input.kind && input.kind !== 'single_course') {
-      throw new ApiError(
-        403,
-        ERROR_CODES.FORBIDDEN,
-        'Teachers can only grant access to their own individual courses.',
-      );
-    }
   }
 
   if (courseId) {
@@ -191,6 +197,41 @@ export async function revokeEntitlement(
   // Section 7: the entitlement cache is at most 60 seconds, so revocation bites
   // on the student's next playback request rather than at next login.
   return { revoked: true };
+}
+
+/**
+ * Finds a student by their EXACT phone number.
+ *
+ * Exact match only, deliberately. A fuzzy search would let any teacher browse
+ * the whole platform's student list — every other teacher's customers included.
+ * The teacher needs this for one case: a student paid in cash and gave them
+ * their number.
+ *
+ * It is still an "is this number registered?" oracle, which is why it is rate
+ * limited and returns nothing beyond what is needed to confirm the right person.
+ */
+export async function findStudentByPhone(actor: Actor, phone: string) {
+  await enforceRate('student-lookup', actor.userId, RATE_LIMITS.studentLookupPerUser);
+
+  const db = getDb();
+  const student = await db.query.profiles.findFirst({
+    where: eq(profiles.phone, phone),
+    columns: { id: true, fullName: true, phone: true, role: true, isActive: true },
+  });
+
+  if (!student || student.role !== 'student') {
+    throw new ApiError(
+      404,
+      ERROR_CODES.NOT_FOUND,
+      'No student account uses that number. Ask them to sign up first — they need an account before you can give them access.',
+    );
+  }
+
+  if (!student.isActive) {
+    throw new ApiError(422, ERROR_CODES.VALIDATION_FAILED, 'That account is deactivated.');
+  }
+
+  return { id: student.id, fullName: student.fullName, phone: student.phone };
 }
 
 /** Students holding access to a given course, for the teacher's roster. */
