@@ -18,7 +18,6 @@ Three things changed materially from your draft, and you should read these befor
 2. **The cost model in your draft understates video bandwidth by roughly 2×, and VdoCipher does not bill monthly.** It sells annual prepaid bandwidth+storage credits. Section 20 rebuilds the model with the arithmetic shown.
 3. **"100% blocked" is not a claim you can defend.** The draft's anti-piracy summary overstates what DRM does. Section 17 gives you the honest matrix — what is hard-blocked, what is deterred, and what is simply not preventable. You need this precision when a teacher asks you directly.
 
-Anything marked **[CONFIRM]** is an assumption I made to keep the document complete. Correct me and I will revise.
 
 ---
 
