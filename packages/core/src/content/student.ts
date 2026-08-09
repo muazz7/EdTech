@@ -1,5 +1,5 @@
-import { asc, eq } from 'drizzle-orm';
-import { courses, getDb, lessons, modules } from '@edtech/db';
+import { and, asc, eq } from 'drizzle-orm';
+import { assignments, courses, getDb, lessons, modules, quizzes } from '@edtech/db';
 import { ApiError, ERROR_CODES, entitlementError } from '@edtech/shared';
 import { checkLessonAccess } from '../entitlements/check-lesson-access.js';
 
@@ -29,6 +29,17 @@ export type StudentLessonView = {
   videoStatus: string | null;
   /** How access was granted, for the UI to explain itself. */
   via: string;
+  /**
+   * The published quiz or assignment on this lesson, if any.
+   *
+   * An id only — starting an attempt or reading the brief goes through the
+   * assessment endpoints, which re-check entitlement and strip the answer key.
+   * Null while the teacher is still authoring, so a published lesson pointing
+   * at a draft quiz shows the student "not ready yet" rather than an empty
+   * player.
+   */
+  quizId: string | null;
+  assignmentId: string | null;
   siblings: Array<{ id: string; title: string; type: string; isFree: boolean }>;
 };
 
@@ -99,9 +110,29 @@ export async function getLessonForStudent(
     .where(eq(lessons.moduleId, row.moduleId))
     .orderBy(asc(lessons.displayOrder));
 
+  // Only looked up for the lesson types that can carry one, and only when
+  // published — a teacher previewing their own draft quiz uses the builder.
+  const quiz =
+    row.type === 'quiz'
+      ? await db.query.quizzes.findFirst({
+          where: and(eq(quizzes.lessonId, lessonId), eq(quizzes.isPublished, true)),
+          columns: { id: true },
+        })
+      : null;
+
+  const assignment =
+    row.type === 'assignment'
+      ? await db.query.assignments.findFirst({
+          where: and(eq(assignments.lessonId, lessonId), eq(assignments.isPublished, true)),
+          columns: { id: true },
+        })
+      : null;
+
   return {
     ...row,
     via: access.via,
+    quizId: quiz?.id ?? null,
+    assignmentId: assignment?.id ?? null,
     siblings: siblings
       .filter((s) => s.isPublished)
       .map(({ id, title, type, isFree }) => ({ id, title, type, isFree })),

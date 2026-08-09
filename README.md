@@ -540,9 +540,75 @@ An attempt with outstanding written answers reports `passed: null`, not `false`.
 Showing a student a fail computed from half a score and then changing it is worse
 than showing "being graded".
 
+**Authoring lives on the lesson.** A quiz lesson opens
+`/teacher/lessons/:id/quiz`, an assignment lesson opens
+`/teacher/lessons/:id/assignment`. Both are their own screen rather than another
+disclosure in the curriculum row: a quiz has too many controls to fold into a
+row, and the answer key belongs somewhere a teacher opens deliberately rather
+than somewhere it can be shoulder-surfed off a shared laptop.
+
+Publishing the **lesson** and publishing the **quiz on it** are separate steps.
+A published lesson pointing at a draft quiz shows students nothing, which is the
+correct behaviour while a teacher is still writing questions.
+
+The builder blocks a publish the server would refuse anyway — no questions, or a
+multiple-choice question with no correct option marked — and says which, so the
+fix happens in place instead of after reading a 409.
+
+**The student player is one component, not three routes.** Start screen, attempt
+and result live in `components/learn/quiz-panel.tsx` because they are one flow —
+splitting them across routes loses the in-progress attempt on every navigation,
+and an attempt is the one thing here that costs a student something to lose. The
+result also has its own URL (`/learn/quizzes/attempts/:id`) because the "your
+result is ready" notification has to land somewhere standalone.
+
+An open attempt is **resumed automatically** on load rather than waiting for the
+student to press Start. Same attempt, same question order, same clock.
+
+Autosave: choices write immediately (one tap, one write), typing is debounced
+800ms, and every pending debounce is flushed before submit so the last thing
+typed is not lost to a race. A failed autosave is **surfaced**, not swallowed —
+silently failing is how a student loses an answer they believe is safe.
+
+The countdown is computed from the server's absolute `expiresAt`, not from a
+duration. A client that starts its own clock on render quietly hands back the
+round-trip on every reload.
+
+**Marking is one screen, because it is one question.** Quiz answers and
+assignment submissions are both "what is waiting on me", so `/teacher/grading`
+shows both, oldest first — a student who has been waiting three days is the one
+to serve next, and any other order buries them.
+
+Assignment submissions are marked **in place** in the queue: an assignment is a
+file and a number, and making a teacher navigate for that turns a two-minute
+batch into ten. Quiz attempts get their own screen because each has several
+answers. The queue therefore carries the submitted files inline, or every row
+would cost a round trip before the teacher could open anything.
+
+Multiple-choice answers are shown to the teacher but **not editable**. Letting a
+teacher hand-overwrite an auto-graded question makes "why is my MCQ wrong"
+unanswerable — the key is the answer, and it is the same key for everyone. The
+server refuses it too (422).
+
+Downloads POST the object key in the body rather than the query string, so
+signed-URL requests do not land in access logs and browser history. The key must
+be one the submission actually holds; anything else is a 404, or the endpoint
+becomes a read primitive for the whole bucket.
+
+**Certificates:** students get `/account/certificates`, teachers get
+`/teacher/courses/:id/certificates` with the completion rules on the same screen
+— a teacher asking "why has nobody got a certificate" needs the thresholds in
+front of them, not one page away. Revocation requires a written reason and says
+plainly that the public page will show *revoked*, not *missing*.
+
 Not built yet in Phase 4:
 
-- Teacher quiz builder UI, student attempt UI, grading queue UI, certificate list
+- Certificate PDFs. `/account/certificates` says so rather than showing a
+  download button that fails; the number and the public link prove the same
+  thing.
+- Assignment uploads have **never run against real R2** — no credentials. The
+  presign is unit-tested behind the MIME and size gates, and the smoke test
+  submits with a hand-built key, but the browser PUT itself is unproven.
 - Certificate PDF generation (Section 13 wants pdf-lib into R2; no R2
   credentials yet, so there is no PDF and `pdf_r2_key` stays null)
 - `CRON_SECRET` is unset in `.env.local`, so every `/cron/*` route answers 503

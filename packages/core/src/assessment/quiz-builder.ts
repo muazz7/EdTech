@@ -477,6 +477,36 @@ export async function getQuizIdForLesson(lessonId: string): Promise<string | nul
   return row?.id ?? null;
 }
 
+/**
+ * The quiz attached to a lesson, with its answer key, for the builder.
+ *
+ * Returns null rather than throwing when a quiz lesson has no quiz yet — that
+ * is the normal state right after the lesson is created, and the builder offers
+ * to create one.
+ */
+export async function getLessonQuizForTeacher(actor: Actor, lessonId: string) {
+  const owned = await requireLesson(actor, lessonId);
+  const quizId = await getQuizIdForLesson(owned.lessonId);
+  if (!quizId) return null;
+  return getQuizForTeacher(actor, quizId);
+}
+
+/** Creates the quiz for a quiz lesson, inheriting its course. One per lesson —
+ *  the schema enforces it with a unique index on `lesson_id`. */
+export async function createQuizForLesson(
+  actor: Actor,
+  lessonId: string,
+  input: Omit<CreateQuizInput, 'lessonId'>,
+) {
+  const owned = await requireLesson(actor, lessonId);
+
+  if (await getQuizIdForLesson(lessonId)) {
+    throw new ApiError(409, ERROR_CODES.CONFLICT, 'This lesson already has a quiz.');
+  }
+
+  return createQuiz(actor, owned.course.courseId, { ...input, lessonId: owned.lessonId });
+}
+
 /** Detaches a quiz from a lesson without destroying its attempts. The FK
  *  cascades on lesson delete, which would take the results with it. */
 export async function detachQuizFromLesson(lessonId: string): Promise<void> {

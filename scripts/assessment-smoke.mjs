@@ -111,7 +111,16 @@ try {
   });
   await call(`/teacher/courses/${courseId}`, { method: 'PATCH', body: { state: 'published' } });
 
-  const quiz = await call(`/teacher/courses/${courseId}/quizzes`, {
+  // A quiz lesson, authored through the lesson-scoped route the builder UI uses.
+  const quizLesson = await call(`/teacher/modules/${mod.data.id}/lessons`, {
+    method: 'POST',
+    body: { title: 'Chapter 1 test', type: 'quiz', isFree: false },
+  });
+
+  const noQuizYet = await call(`/teacher/lessons/${quizLesson.data.id}/quiz`);
+  check('a quiz lesson with no quiz returns null, not an error', noQuizYet.data, null);
+
+  const quiz = await call(`/teacher/lessons/${quizLesson.data.id}/quiz`, {
     method: 'POST',
     body: {
       title: 'Chapter 1 test',
@@ -123,6 +132,17 @@ try {
   });
   check('quiz created', quiz.status, 201);
   const quizId = quiz.data.id;
+
+  const duplicate = await call(`/teacher/lessons/${quizLesson.data.id}/quiz`, {
+    method: 'POST',
+    body: { title: 'Second quiz', passPercentage: 50, maxAttempts: 1 },
+  });
+  check('one quiz per lesson', duplicate.status, 409);
+
+  await call(`/teacher/lessons/${quizLesson.data.id}`, {
+    method: 'PATCH',
+    body: { isPublished: true },
+  });
 
   const mcq = await call(`/teacher/quizzes/${quizId}/questions`, {
     method: 'POST',
@@ -254,6 +274,15 @@ try {
     true,
   );
 
+  const forGrading = await call(`/teacher/attempts/${attempt.data.attemptId}`);
+  check('the marking screen loads the attempt', forGrading.status, 200);
+  check('it names the student', forGrading.data.student.fullName, 'Assessment Student');
+  check(
+    'it carries the written answer to mark',
+    forGrading.data.questions.some((q) => q.textAnswer?.includes('Plants take in')),
+    true,
+  );
+
   const graded = await call(`/teacher/attempts/${attempt.data.attemptId}/grade`, {
     method: 'POST',
     body: { questionId: written.data.id, awardedMarks: '8', teacherFeedback: 'Good.' },
@@ -283,7 +312,12 @@ try {
   );
 
   console.log('\n--- 7. assignments ---');
-  const assignment = await call(`/teacher/courses/${courseId}/assignments`, {
+  const assignmentLesson = await call(`/teacher/modules/${mod.data.id}/lessons`, {
+    method: 'POST',
+    body: { title: 'Lab report', type: 'assignment', isFree: false },
+  });
+
+  const assignment = await call(`/teacher/lessons/${assignmentLesson.data.id}/assignment`, {
     method: 'POST',
     body: {
       title: 'Lab report',
@@ -299,6 +333,17 @@ try {
     method: 'PATCH',
     body: { isPublished: true },
   });
+
+  // The LESSON is published separately from the assignment on it. Without this
+  // the brief exists but no student can reach it.
+  await call(`/teacher/lessons/${assignmentLesson.data.id}`, {
+    method: 'PATCH',
+    body: { isPublished: true },
+  });
+
+  const brief = await call(`/teacher/lessons/${assignmentLesson.data.id}/assignment`);
+  check('the brief editor can read it back', brief.data.id, assignment.data.id);
+  check('with a submission count for the header', brief.data.submissionCount, 0);
 
   const badMime = await asStudent(`/assignments/${assignment.data.id}/upload-url`, {
     method: 'POST',
@@ -351,6 +396,24 @@ try {
   const submissions = await call(`/teacher/assignments/${assignment.data.id}/submissions`);
   check('teacher sees the submission', submissions.data.length, 1);
 
+  // The marking queue has to carry the files, or every row costs a round trip
+  // before the teacher can open anything.
+  const queueBefore = await call('/teacher/grading');
+  const queued = queueBefore.data.assignmentSubmissions.find(
+    (row) => row.id === submissions.data[0].id,
+  );
+  check('the submission is in the marking queue', Boolean(queued), true);
+  check('with its files attached', queued.files.length, 1);
+  check('and the max marks to validate against', queued.maxMarks, '50.00');
+
+  // Signing an arbitrary key would turn this into a read primitive for the
+  // whole bucket.
+  const foreignDownload = await call(`/teacher/submissions/${submissions.data[0].id}/download`, {
+    method: 'POST',
+    body: { key: 'assignments/somebody-else/secret.pdf' },
+  });
+  check('a key this submission does not hold is refused', foreignDownload.status, 404);
+
   await call(`/teacher/submissions/${submissions.data[0].id}/grade`, {
     method: 'POST',
     body: { marks: '45', teacherFeedback: 'Neat work.' },
@@ -372,13 +435,20 @@ try {
   check('resubmission locked after grading (ADR 0004)', locked.status, 409);
 
   console.log('\n--- 8. certificates ---');
-  // Complete the one published lesson so the default 90% rule is met.
-  await sql`
-    INSERT INTO lesson_progress (student_id, lesson_id, course_id, seconds_watched,
-                                 last_position, is_complete, completed_at)
-    VALUES (${studentId}, ${lesson.data.id}, ${courseId}, 600, 600, true, now())
-    ON CONFLICT (student_id, lesson_id)
-    DO UPDATE SET is_complete = true, completed_at = now()`;
+  // EVERY published lesson, not just the first: the default rule is 90% of
+  // published lessons, and this course also has the quiz and assignment lessons
+  // created above. Completing one of three leaves the student at 33%.
+  const published = await sql`
+    SELECT id FROM lessons WHERE course_id = ${courseId} AND is_published`;
+  for (const row of published) {
+    await sql`
+      INSERT INTO lesson_progress (student_id, lesson_id, course_id, seconds_watched,
+                                   last_position, is_complete, completed_at)
+      VALUES (${studentId}, ${row.id}, ${courseId}, 600, 600, true, now())
+      ON CONFLICT (student_id, lesson_id)
+      DO UPDATE SET is_complete = true, completed_at = now()`;
+  }
+  check('the course has more than one published lesson', published.length > 1, true);
 
   const completion = await asStudent(`/me/completion/${courseId}`);
   check('completion evaluates', completion.status, 200);
@@ -460,12 +530,71 @@ try {
   const verifyPage = await fetch(`${PAGE_BASE}/verify/${certificate.certificate_no}`);
   check('the verification page renders for a stranger', verifyPage.status, 200);
 
-  console.log('\n--- 10. private endpoints refuse strangers ---');
+  console.log('\n--- 10. the student lesson finds its quiz ---');
+  const quizLessonView = await asStudent(`/lessons/${quizLesson.data.id}`);
+  check('quiz lesson loads', quizLessonView.status, 200);
+  check('it carries the quiz id', quizLessonView.data.quizId, quizId);
+  check('and no assignment id', quizLessonView.data.assignmentId, null);
+
+  const assignmentLessonView = await asStudent(`/lessons/${assignmentLesson.data.id}`);
+  check('it carries the assignment id', assignmentLessonView.data.assignmentId, assignment.data.id);
+
+  // A published lesson pointing at a DRAFT quiz must report null, so the player
+  // shows "not ready yet" rather than an empty attempt.
+  const draftQuizLesson = await call(`/teacher/modules/${mod.data.id}/lessons`, {
+    method: 'POST',
+    body: { title: 'Unfinished quiz', type: 'quiz', isFree: false },
+  });
+  await call(`/teacher/lessons/${draftQuizLesson.data.id}/quiz`, {
+    method: 'POST',
+    body: { title: 'Still writing', passPercentage: 50, maxAttempts: 1 },
+  });
+  await call(`/teacher/lessons/${draftQuizLesson.data.id}`, {
+    method: 'PATCH',
+    body: { isPublished: true },
+  });
+
+  const draftView = await asStudent(`/lessons/${draftQuizLesson.data.id}`);
+  check('a draft quiz is not exposed to the student', draftView.data.quizId, null);
+
+  console.log('\n--- 11. student pages render ---');
+  for (const path of [
+    `/learn/lessons/${quizLesson.data.id}`,
+    `/learn/lessons/${assignmentLesson.data.id}`,
+    `/learn/quizzes/attempts/${attempt.data.attemptId}`,
+  ]) {
+    const page = await fetch(`${PAGE_BASE}${path}`);
+    check(`GET ${path} returns 200`, page.status, 200);
+  }
+
+  console.log('\n--- 12. teacher pages render ---');
+  for (const path of [
+    `/teacher/lessons/${quizLesson.data.id}/quiz`,
+    `/teacher/lessons/${assignmentLesson.data.id}/assignment`,
+    `/teacher/courses/${courseId}`,
+    `/teacher/courses/${courseId}/certificates`,
+    '/teacher/grading',
+    `/teacher/grading/attempts/${attempt.data.attemptId}`,
+    '/account/certificates',
+  ]) {
+    const page = await fetch(`${PAGE_BASE}${path}`);
+    check(`GET ${path} returns 200`, page.status, 200);
+  }
+
+  const rules = await call(`/teacher/courses/${courseId}/completion-rules`);
+  check('completion rules load for the certificates screen', rules.status, 200);
+  check('with a lessons threshold', typeof rules.data.minLessonsPercent === 'number', true);
+
+  const courseCerts = await call(`/teacher/courses/${courseId}/certificates`);
+  check('the teacher sees the issued certificate', courseCerts.data.length, 1);
+
+  console.log('\n--- 13. private endpoints refuse strangers ---');
   for (const path of [
     `/quizzes/${quizId}/attempts`,
     `/attempts/${attempt.data.attemptId}/result`,
     `/teacher/grading`,
     `/teacher/quizzes/${quizId}`,
+    `/teacher/lessons/${quizLesson.data.id}/quiz`,
   ]) {
     const anon = await call(path, { anonymous: true });
     check(`anonymous ${path} rejected`, anon.status, 401);

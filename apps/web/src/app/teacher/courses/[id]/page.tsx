@@ -107,12 +107,20 @@ export default function CourseBuilderPage() {
               )}
             </div>
 
-            <Link
-              href={`/teacher/courses/${courseId}/students`}
-              className="inline-flex min-h-11 items-center rounded-[var(--radius-md)] border border-[var(--color-border-strong)] px-4 text-sm font-medium text-[var(--color-foreground)] transition-colors duration-150 hover:bg-[var(--color-muted)]"
-            >
-              Students
-            </Link>
+            <div className="flex flex-wrap gap-2">
+              <Link
+                href={`/teacher/courses/${courseId}/students`}
+                className="inline-flex min-h-11 items-center rounded-[var(--radius-md)] border border-[var(--color-border-strong)] px-4 text-sm font-medium text-[var(--color-foreground)] transition-colors duration-150 hover:bg-[var(--color-muted)]"
+              >
+                Students
+              </Link>
+              <Link
+                href={`/teacher/courses/${courseId}/certificates`}
+                className="inline-flex min-h-11 items-center rounded-[var(--radius-md)] border border-[var(--color-border-strong)] px-4 text-sm font-medium text-[var(--color-foreground)] transition-colors duration-150 hover:bg-[var(--color-muted)]"
+              >
+                Certificates
+              </Link>
+            </div>
           </div>
 
           <CourseSettings course={course} onSaved={setCourse} />

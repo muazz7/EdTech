@@ -6,7 +6,7 @@ import { api } from '@/lib/client/api-client';
 import { AuthProvider, useAuth } from '@/components/auth-provider';
 import { SiteHeader } from '@/components/site-header';
 import { Badge, Button, Card, EmptyState, ErrorNote, ProgressBar, Skeleton } from '@/components/ui';
-import { BellIcon, DeviceIcon, KeyIcon } from '@/components/icons';
+import { BellIcon, CheckCircleIcon, DeviceIcon, KeyIcon } from '@/components/icons';
 
 type AccountSecurity = {
   session: {
@@ -159,6 +159,13 @@ function AccountScreen() {
           >
             <KeyIcon className="size-4" />
             Payments
+          </Link>
+          <Link
+            href="/account/certificates"
+            className="inline-flex min-h-11 items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border-strong)] px-3 text-sm text-[var(--color-foreground)] hover:bg-[var(--color-muted)]"
+          >
+            <CheckCircleIcon className="size-4" />
+            Certificates
           </Link>
           {me.role === 'teacher' && (
             <Link

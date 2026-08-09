@@ -48,6 +48,7 @@ function TeacherChrome({ children }: { children: ReactNode }) {
           <ul className="flex min-w-max gap-1 pb-1">
             {[
               { href: '/teacher', label: 'Courses' },
+              { href: '/teacher/grading', label: 'Marking' },
               { href: '/teacher/payments', label: 'Payments' },
               { href: '/teacher/payment-methods', label: 'Payment settings' },
             ].map((item) => {

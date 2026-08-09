@@ -10,6 +10,8 @@ import { Badge, Card, EmptyState, ErrorNote, ProgressBar, Skeleton } from '@/com
 import { CheckCircleIcon, LessonTypeIcon, LockIcon } from '@/components/icons';
 import { DrmPlayer } from '@/components/learn/drm-player';
 import { DocumentViewer } from '@/components/learn/document-viewer';
+import { QuizPanel } from '@/components/learn/quiz-panel';
+import { AssignmentPanel } from '@/components/learn/assignment-panel';
 import type { ProgressSnapshot } from '@/components/learn/use-progress-reporter';
 
 type LessonView = {
@@ -24,6 +26,10 @@ type LessonView = {
   durationSeconds: number | null;
   pageCount: number | null;
   videoStatus: string | null;
+  /** Null while the teacher is still authoring — a published lesson can point
+   *  at a draft quiz. */
+  quizId: string | null;
+  assignmentId: string | null;
   via: string;
   siblings: Array<{ id: string; title: string; type: string; isFree: boolean }>;
 };
@@ -266,12 +272,25 @@ function LessonScreen() {
               />
             )}
 
-            {(lesson.type === 'quiz' || lesson.type === 'assignment') && (
-              <EmptyState
-                title={lesson.type === 'quiz' ? 'Quizzes arrive later' : 'Assignments arrive later'}
-                body="This lesson type is not built yet."
-              />
-            )}
+            {lesson.type === 'quiz' &&
+              (lesson.quizId ? (
+                <QuizPanel quizId={lesson.quizId} />
+              ) : (
+                <EmptyState
+                  title="This quiz is not ready yet"
+                  body="Your teacher is still writing the questions. Check back shortly."
+                />
+              ))}
+
+            {lesson.type === 'assignment' &&
+              (lesson.assignmentId ? (
+                <AssignmentPanel assignmentId={lesson.assignmentId} />
+              ) : (
+                <EmptyState
+                  title="This assignment is not ready yet"
+                  body="Your teacher is still writing the brief. Check back shortly."
+                />
+              ))}
           </div>
 
           {/* Course-level progress, not this lesson's. A bar that only moves

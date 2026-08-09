@@ -442,17 +442,30 @@ function LessonList({
                 </div>
               </div>
 
-              {/* Files are behind a disclosure rather than always open: a module
-                  with twenty lessons would otherwise be twenty upload forms. */}
-              <button
-                type="button"
-                onClick={() => setExpandedId(expandedId === lesson.id ? null : lesson.id)}
-                aria-expanded={expandedId === lesson.id}
-                aria-controls={`upload-${lesson.id}`}
-                className="min-h-11 shrink-0 rounded-[var(--radius-sm)] px-3 text-sm font-medium text-[var(--color-primary)] transition-colors duration-150 hover:bg-[var(--color-cyan-tint)]"
-              >
-                {expandedId === lesson.id ? 'Close' : 'Files'}
-              </button>
+              {/* A quiz or an assignment is authored on its own screen — there
+                  are too many controls to fold into a row, and the answer key
+                  belongs somewhere a teacher opens deliberately. */}
+              {lesson.type === 'quiz' || lesson.type === 'assignment' ? (
+                <Link
+                  href={`/teacher/lessons/${lesson.id}/${lesson.type}`}
+                  className="inline-flex min-h-11 shrink-0 items-center rounded-[var(--radius-sm)] px-3 text-sm font-medium text-[var(--color-primary)] transition-colors duration-150 hover:bg-[var(--color-cyan-tint)]"
+                >
+                  {lesson.type === 'quiz' ? 'Questions' : 'Brief'}
+                </Link>
+              ) : (
+                /* Files are behind a disclosure rather than always open: a
+                   module with twenty lessons would otherwise be twenty upload
+                   forms. */
+                <button
+                  type="button"
+                  onClick={() => setExpandedId(expandedId === lesson.id ? null : lesson.id)}
+                  aria-expanded={expandedId === lesson.id}
+                  aria-controls={`upload-${lesson.id}`}
+                  className="min-h-11 shrink-0 rounded-[var(--radius-sm)] px-3 text-sm font-medium text-[var(--color-primary)] transition-colors duration-150 hover:bg-[var(--color-cyan-tint)]"
+                >
+                  {expandedId === lesson.id ? 'Close' : 'Files'}
+                </button>
+              )}
 
               <MoveControls
                 label={`lesson ${lesson.title}`}
@@ -471,6 +484,19 @@ function LessonList({
                 }}
               />
             </div>
+
+            {/* Quiz and assignment lessons have no upload disclosure to hold
+                the publish switch, so it sits in the row. Publishing the LESSON
+                and publishing the quiz on it are separate steps: a published
+                lesson pointing at a draft quiz shows students nothing. */}
+            {(lesson.type === 'quiz' || lesson.type === 'assignment') && (
+              <PublishToggle
+                lesson={lesson}
+                onUpdated={(patch) =>
+                  onChanged(module.lessons.map((l) => (l.id === lesson.id ? { ...l, ...patch } : l)))
+                }
+              />
+            )}
 
             {expandedId === lesson.id && (
               <div id={`upload-${lesson.id}`}>
@@ -548,7 +574,10 @@ function PublishToggle({
   const [error, setError] = useState<string | null>(null);
 
   const videoNotReady = lesson.type === 'video' && lesson.videoStatus !== 'ready';
-  const missingFile = lesson.type !== 'video' && lesson.type !== 'quiz' && !lesson.hasFile;
+  // Quiz and assignment lessons carry no file of their own — their content is
+  // the quiz or the brief, published separately on its own screen.
+  const carriesFile = !['video', 'quiz', 'assignment'].includes(lesson.type);
+  const missingFile = carriesFile && !lesson.hasFile;
   const blocked = videoNotReady || missingFile;
 
   async function patch(body: Partial<LessonNode>, which: 'publish' | 'free') {

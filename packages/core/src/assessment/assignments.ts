@@ -169,6 +169,55 @@ export async function listAssignmentsForCourse(actor: Actor, courseId: string) {
     .orderBy(asc(assignments.createdAt));
 }
 
+/**
+ * The assignment attached to a lesson, for the teacher's brief editor.
+ *
+ * Null rather than a throw when there is none yet — that is the normal state
+ * immediately after an assignment lesson is created.
+ */
+export async function getLessonAssignmentForTeacher(actor: Actor, lessonId: string) {
+  const owned = await requireLesson(actor, lessonId);
+  const db = getDb();
+
+  const assignment = await db.query.assignments.findFirst({
+    where: eq(assignments.lessonId, owned.lessonId),
+  });
+  if (!assignment) return null;
+
+  const [counts] = await db
+    .select({
+      total: sql<number>`count(*)::int`,
+      ungraded: sql<number>`count(*) FILTER (WHERE graded_at IS NULL)::int`,
+    })
+    .from(assignmentSubmissions)
+    .where(eq(assignmentSubmissions.assignmentId, assignment.id));
+
+  return {
+    ...assignment,
+    submissionCount: counts?.total ?? 0,
+    ungradedCount: counts?.ungraded ?? 0,
+  };
+}
+
+/** Creates the assignment for an assignment lesson, inheriting its course. */
+export async function createAssignmentForLesson(
+  actor: Actor,
+  lessonId: string,
+  input: Omit<CreateAssignmentInput, 'lessonId'>,
+) {
+  const owned = await requireLesson(actor, lessonId);
+  const db = getDb();
+
+  const existing = await db.query.assignments.findFirst({
+    where: eq(assignments.lessonId, owned.lessonId),
+  });
+  if (existing) {
+    throw new ApiError(409, ERROR_CODES.CONFLICT, 'This lesson already has an assignment.');
+  }
+
+  return createAssignment(actor, owned.course.courseId, { ...input, lessonId: owned.lessonId });
+}
+
 // ── Student submission ──────────────────────────────────────────────────────
 
 /** The assignment as a student sees it, plus their own submission if any. */
@@ -541,6 +590,10 @@ export async function listRecentSubmissions(actor: Actor, limit = 50) {
       studentName: profiles.fullName,
       submittedAt: assignmentSubmissions.submittedAt,
       isLate: assignmentSubmissions.isLate,
+      studentNote: assignmentSubmissions.studentNote,
+      // Included so the queue can offer the download without a second round
+      // trip per row. The keys are teacher-side only; students never see them.
+      files: assignmentSubmissions.files,
       gradedAt: assignmentSubmissions.gradedAt,
       marks: assignmentSubmissions.marks,
       maxMarks: assignments.maxMarks,
