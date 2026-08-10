@@ -7,10 +7,60 @@
  * Uses MIGRATION_DATABASE_URL (session pooler) so it works on IPv4-only
  * networks — Supabase's direct host is IPv6-only.
  */
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { config as loadEnv } from 'dotenv';
 import postgres from 'postgres';
 
 loadEnv({ path: '.env.local' });
+
+/**
+ * drizzle-kit applies a journal entry only when its `when` is newer than the
+ * last applied `created_at`. A migration whose `when` is older than one already
+ * applied is SKIPPED WITHOUT AN ERROR — which is how a hand-written migration
+ * dated in the future silently swallowed the next two.
+ *
+ * So the journal is checked here rather than trusted: every entry must be
+ * applied, and the timestamps must increase.
+ */
+async function checkMigrationJournal(applied) {
+  const journalPath = fileURLToPath(
+    new URL('../packages/db/migrations/meta/_journal.json', import.meta.url),
+  );
+
+  let journal;
+  try {
+    journal = JSON.parse(readFileSync(journalPath, 'utf8'));
+  } catch {
+    console.log('journal: NOT READABLE');
+    return;
+  }
+
+  const appliedAt = new Set(applied.map((row) => Number(row.created_at)));
+  const problems = [];
+
+  let previous = -Infinity;
+  for (const entry of journal.entries) {
+    if (entry.when <= previous) {
+      problems.push(
+        `${entry.tag} is dated ${entry.when}, not after the previous entry (${previous}) — drizzle will skip it`,
+      );
+    }
+    previous = entry.when;
+
+    if (!appliedAt.has(entry.when)) {
+      problems.push(`${entry.tag} is in the journal but NOT APPLIED`);
+    }
+  }
+
+  if (problems.length === 0) {
+    console.log(`journal: ${journal.entries.length} entries, all applied, timestamps monotonic`);
+    return;
+  }
+
+  console.log('journal: PROBLEMS');
+  for (const problem of problems) console.log(`  ${problem}`);
+}
 
 const url = process.env.MIGRATION_DATABASE_URL ?? process.env.DATABASE_URL;
 if (!url) {
@@ -51,6 +101,8 @@ try {
     select hash, created_at from drizzle.__drizzle_migrations order by created_at
   `.catch(() => []);
   console.log(`migrations recorded: ${applied.length}`);
+
+  await checkMigrationJournal(applied);
 
   const sessions = await sql`
     select id, device_label, platform, revoked_at, revoked_reason, created_at

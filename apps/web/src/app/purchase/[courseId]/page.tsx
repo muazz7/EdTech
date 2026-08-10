@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useSearchParams } from 'next/navigation';
 import { formatPoisha } from '@edtech/shared';
 import { ApiClientError, api } from '@/lib/client/api-client';
 import { uploadPaymentProof } from '@/lib/client/uploads';
@@ -35,11 +35,17 @@ type Intent = {
   paymentId: string;
   referenceCode: string;
   amountPoisha: number;
+  originalPoisha: number;
+  discountPoisha: number;
+  promoCode: string | null;
   currency: string;
   target: { kind: string; title: string };
   methods: Method[];
   verificationSlaHours: number;
   expiresInDays: number;
+  /** A promo code covered the whole price: access is already granted and there
+   *  is nothing to transfer. */
+  settled: boolean;
 };
 
 const CHANNEL_LABELS: Record<string, string> = {
@@ -63,7 +69,16 @@ type Step = 'instructions' | 'submit' | 'done';
  */
 function PurchaseScreen() {
   const params = useParams<{ courseId: string }>();
+  const searchParams = useSearchParams();
   const { state } = useAuth();
+
+  /**
+   * A plan purchase reuses this screen: the instructions, the reference code
+   * and the proof upload are identical, and only the target differs. It arrives
+   * as `/purchase/plan?planId=<uuid>` — the literal segment "plan" in place of a
+   * course id, which is never a valid uuid, so the two cannot be confused.
+   */
+  const planId = params.courseId === 'plan' ? searchParams.get('planId') : null;
 
   const [intent, setIntent] = useState<Intent | null>(null);
   // Held here rather than inside the instructions step: the submission has to
@@ -74,13 +89,20 @@ function PurchaseScreen() {
   const [error, setError] = useState<string | null>(null);
   const [blocked, setBlocked] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (promoCode?: string) => {
     setError(null);
     setBlocked(null);
     try {
       // Reuses an existing pending intent rather than minting a second
       // reference code, so a reload never leaves the student holding two.
-      setIntent(await api.post<Intent>('/payments/intent', { courseId: params.courseId }));
+      setIntent(
+        await api.post<Intent>('/payments/intent', {
+          ...(planId ? { planId } : { courseId: params.courseId }),
+          // Promo codes are a teacher discounting their own course; the server
+          // refuses one against a platform-wide plan.
+          ...(promoCode && !planId ? { promoCode } : {}),
+        }),
+      );
     } catch (err) {
       if (err instanceof ApiClientError && (err.status === 409 || err.status === 422)) {
         setBlocked(err.message);
@@ -90,7 +112,7 @@ function PurchaseScreen() {
         setError(err instanceof Error ? err.message : 'Could not start this purchase.');
       }
     }
-  }, [params.courseId]);
+  }, [params.courseId, planId]);
 
   useEffect(() => {
     if (state.status === 'signed-in') void load();
@@ -126,7 +148,9 @@ function PurchaseScreen() {
 
   return (
     <div className="mx-auto max-w-xl px-4 py-8 sm:px-6">
-      <h1 className="text-2xl font-semibold text-[var(--color-foreground)]">Buy this course</h1>
+      <h1 className="text-2xl font-semibold text-[var(--color-foreground)]">
+        {planId ? 'Buy this plan' : 'Buy this course'}
+      </h1>
 
       {error && (
         <div className="mt-4">
@@ -155,17 +179,43 @@ function PurchaseScreen() {
         </div>
       )}
 
-      {intent && step === 'instructions' && (
-        <Instructions
-          intent={intent}
-          onContinue={(chosen) => {
-            setMethodId(chosen);
-            setStep('submit');
-          }}
-        />
+      {/* A code that covers the whole price has nothing to transfer and nothing
+          to prove, so the instructions flow would be theatre. */}
+      {intent?.settled && (
+        <Card className="mt-4 p-6 text-center">
+          <p className="text-lg font-semibold text-[var(--color-success)]">
+            Your code covered the full price
+          </p>
+          <p className="prose-measure mx-auto mt-2 text-sm text-[var(--color-muted-foreground)]">
+            Access to {intent.target.title} is already open. Nothing to pay.
+          </p>
+          <Link
+            href="/my-courses"
+            className="mt-4 inline-flex min-h-11 items-center rounded-[var(--radius-md)] bg-[var(--color-primary)] px-5 text-sm font-medium text-[var(--color-on-primary)]"
+          >
+            Start learning
+          </Link>
+        </Card>
       )}
 
-      {intent && step === 'submit' && (
+      {intent && !intent.settled && step === 'instructions' && (
+        <>
+          <PromoField
+            applied={intent.promoCode}
+            discountPoisha={intent.discountPoisha}
+            onApply={(code) => void load(code)}
+          />
+          <Instructions
+            intent={intent}
+            onContinue={(chosen) => {
+              setMethodId(chosen);
+              setStep('submit');
+            }}
+          />
+        </>
+      )}
+
+      {intent && !intent.settled && step === 'submit' && (
         <SubmitForm
           intent={intent}
           methodId={methodId}
@@ -175,6 +225,78 @@ function PurchaseScreen() {
       )}
 
       {intent && step === 'done' && <PendingConfirmation intent={intent} />}
+    </div>
+  );
+}
+
+/**
+ * Promo code entry.
+ *
+ * Applying re-creates the intent rather than patching the amount, because the
+ * discount and the slot reservation both belong to the payment row. The server
+ * reserves the code under a row lock at that moment — what the student sees
+ * here is the result, not a promise.
+ */
+function PromoField({
+  applied,
+  discountPoisha,
+  onApply,
+}: {
+  applied: string | null;
+  discountPoisha: number;
+  onApply: (code: string) => void;
+}) {
+  const [code, setCode] = useState('');
+  const [open, setOpen] = useState(false);
+
+  if (discountPoisha > 0) {
+    return (
+      <Card className="mt-4 flex flex-wrap items-center justify-between gap-2 p-4">
+        <p className="text-sm text-[var(--color-foreground)]">
+          Code {applied && <span className="tabular font-semibold">{applied}</span>} applied —{' '}
+          <span className="tabular font-semibold text-[var(--color-success)]">
+            {formatPoisha(discountPoisha)} off
+          </span>
+        </p>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="mt-4">
+      {open ? (
+        <Card className="p-4">
+          <Field label="Promo code" hint="From your teacher. Case does not matter.">
+            {(props) => (
+              <Input
+                {...props}
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder="EID50"
+                className="tabular uppercase"
+                autoCapitalize="characters"
+              />
+            )}
+          </Field>
+          <div className="mt-3 flex gap-2">
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={code.trim().length < 4}
+              onClick={() => onApply(code.trim().toUpperCase())}
+            >
+              Apply
+            </Button>
+            <Button size="sm" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+          </div>
+        </Card>
+      ) : (
+        <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
+          Have a promo code?
+        </Button>
+      )}
     </div>
   );
 }

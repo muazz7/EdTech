@@ -9,6 +9,7 @@ import {
   PAYMENT_VERIFICATION_SLA_HOURS,
 } from '@edtech/shared';
 import { listPayableMethods } from './methods.js';
+import { reservePromoCode } from '../commerce/promo.js';
 
 /**
  * Payment intent (Section 8.1).
@@ -37,11 +38,22 @@ export type PaymentIntent = {
   paymentId: string;
   referenceCode: string;
   amountPoisha: number;
+  /** What the price was before a promo code, and what the code took off. */
+  originalPoisha: number;
+  discountPoisha: number;
+  promoCode: string | null;
   currency: string;
   target: { kind: 'single_course'; courseId: string; title: string } | { kind: 'plan'; planId: string; title: string };
   methods: Awaited<ReturnType<typeof listPayableMethods>>;
   verificationSlaHours: number;
   expiresInDays: number;
+  /**
+   * True when a promo code covered the whole price. There is nothing to pay and
+   * nothing to prove, so the entitlement is already granted and the payment
+   * recorded as verified — the client should go straight to the course rather
+   * than showing instructions for a 0 BDT transfer.
+   */
+  settled: boolean;
 };
 
 /** Who reviews this payment: the owning teacher for a course, the Owner for a
@@ -94,7 +106,7 @@ async function hasActiveEntitlementFor(studentId: string, courseId: string): Pro
 
 export async function createPaymentIntent(
   studentId: string,
-  input: { courseId?: string; planId?: string },
+  input: { courseId?: string; planId?: string; promoCode?: string },
 ): Promise<PaymentIntent> {
   if (Boolean(input.courseId) === Boolean(input.planId)) {
     throw new ApiError(
@@ -104,11 +116,22 @@ export async function createPaymentIntent(
     );
   }
 
+  // A promo code is one teacher discounting their own course. Platform-wide
+  // plans span every teacher's catalog, so no teacher's code may touch them.
+  if (input.promoCode && !input.courseId) {
+    throw new ApiError(
+      422,
+      ERROR_CODES.VALIDATION_FAILED,
+      'Promo codes apply to individual courses, not to plans.',
+    );
+  }
+
   const db = getDb();
 
   let amountPoisha: number;
   let target: PaymentIntent['target'];
   let reviewer: { reviewerId: string | null; payTo: string };
+  let promo: { promoCodeId: string; discountPoisha: number } | null = null;
 
   if (input.courseId) {
     const course = await db.query.courses.findFirst({
@@ -130,6 +153,18 @@ export async function createPaymentIntent(
     }
 
     amountPoisha = course.pricePoisha;
+
+    if (input.promoCode) {
+      // Reserved under a row lock, so two students racing for the last slot of
+      // a limited code cannot both take it.
+      const reserved = await reservePromoCode(studentId, {
+        code: input.promoCode,
+        courseId: course.id,
+      });
+      promo = { promoCodeId: reserved.promoCodeId, discountPoisha: reserved.discountPoisha };
+      amountPoisha = reserved.finalPoisha;
+    }
+
     target = { kind: 'single_course', courseId: course.id, title: course.title };
     reviewer = await resolveReviewer({ kind: 'course', courseId: course.id });
   } else {
@@ -173,6 +208,9 @@ export async function createPaymentIntent(
       paymentId: existing.id,
       referenceCode: existing.referenceCode,
       amountPoisha: existing.amountPoisha,
+      originalPoisha: existing.amountPoisha + existing.discountPoisha,
+      discountPoisha: existing.discountPoisha,
+      promoCode: null,
       currency: existing.currency,
       target,
       methods,
@@ -180,6 +218,7 @@ export async function createPaymentIntent(
         process.env.PAYMENT_VERIFICATION_SLA_HOURS ?? PAYMENT_VERIFICATION_SLA_HOURS,
       ),
       expiresInDays: 7,
+      settled: false,
     };
   }
 
@@ -197,6 +236,11 @@ export async function createPaymentIntent(
         // Locked here. A price change afterwards must not alter what this
         // student owes (ADR 0002).
         amountPoisha,
+        // The discount is already inside amountPoisha. Both are kept so a
+        // dispute can be settled against the original price and the code that
+        // changed it.
+        promoCodeId: promo?.promoCodeId ?? null,
+        discountPoisha: promo?.discountPoisha ?? 0,
         // Channel is chosen at submission; 'other' is a placeholder that the
         // student's actual choice overwrites.
         channel: 'other',
@@ -206,10 +250,37 @@ export async function createPaymentIntent(
     return row?.referenceCode;
   });
 
+  // A code that covers the whole price leaves nothing to transfer and nothing
+  // to prove, so the manual verification step is meaningless. Settle it here:
+  // mark the payment verified and grant access immediately.
+  let settled = false;
+  if (amountPoisha === 0 && promo && input.courseId) {
+    await db.transaction(async (tx) => {
+      await tx
+        .update(payments)
+        .set({ status: 'verified', reviewedAt: sql`now()` })
+        .where(eq(payments.id, paymentId));
+
+      await tx.insert(entitlements).values({
+        id: uuidv7(),
+        studentId,
+        kind: 'single_course',
+        courseId: input.courseId!,
+        paymentId,
+        source: 'promo',
+        startsAt: new Date(),
+      });
+    });
+    settled = true;
+  }
+
   return {
     paymentId,
     referenceCode,
     amountPoisha,
+    originalPoisha: amountPoisha + (promo?.discountPoisha ?? 0),
+    discountPoisha: promo?.discountPoisha ?? 0,
+    promoCode: input.promoCode?.trim().toUpperCase() ?? null,
     currency: 'BDT',
     target,
     methods,
@@ -217,6 +288,7 @@ export async function createPaymentIntent(
       process.env.PAYMENT_VERIFICATION_SLA_HOURS ?? PAYMENT_VERIFICATION_SLA_HOURS,
     ),
     expiresInDays: 7,
+    settled,
   };
 }
 

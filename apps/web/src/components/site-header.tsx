@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from './auth-provider';
+import { ExpiryBanner } from './expiry-banner';
 import { NotificationBell } from './notification-bell';
 import { Button } from './ui';
 
@@ -21,6 +22,7 @@ export function SiteHeader() {
 
   const links = [
     { href: '/', label: 'Courses' },
+    { href: '/plans', label: 'Plans' },
     { href: '/free', label: 'Free lessons' },
     // Account is in the tab row as well as the top bar: the top-bar link is
     // hidden below the sm breakpoint, and on a phone this is the only way in.
@@ -34,6 +36,10 @@ export function SiteHeader() {
 
   return (
     <header className="sticky top-0 z-[var(--z-sticky)] border-b border-[var(--color-border)] bg-[var(--color-surface)]">
+      {/* Above the navigation, not inside a page: the moment a renewal warning
+          matters is when the student is trying to open a lesson. */}
+      <ExpiryBanner />
+
       <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
         <Link
           href="/"

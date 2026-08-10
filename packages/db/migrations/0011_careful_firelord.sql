@@ -1,0 +1,1 @@
+ALTER TABLE "entitlements" ADD COLUMN "reminder_stage" integer;

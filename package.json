@@ -28,7 +28,10 @@
     "smoke:payments": "dotenv -e .env.local -- node scripts/payments-smoke.mjs",
     "smoke:catalog": "dotenv -e .env.local -- node scripts/catalog-smoke.mjs",
     "smoke:assessment": "dotenv -e .env.local -- node scripts/assessment-smoke.mjs",
-    "audit:rls": "dotenv -e .env.local -- node scripts/rls-audit.mjs"
+    "smoke:commerce": "dotenv -e .env.local -- node scripts/commerce-smoke.mjs",
+    "smoke:doubts": "dotenv -e .env.local -- node scripts/doubts-smoke.mjs",
+    "audit:rls": "dotenv -e .env.local -- node scripts/rls-audit.mjs",
+    "preflight": "dotenv -e .env.local -- node scripts/preflight.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

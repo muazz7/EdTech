@@ -32,33 +32,82 @@ export const doubtThreads = pgTable(
       .references(() => profiles.id, { onDelete: 'cascade' }),
     title: text('title').notNull(),
     body: text('body').notNull(),
+    /** A photo of the working. Most doubts here are about a maths step, and
+     *  describing one in text is harder than photographing it. */
+    imageR2Key: text('image_r2_key'),
     isResolved: boolean('is_resolved').notNull().default(false),
     isPinned: boolean('is_pinned').notNull().default(false),
     /** Visible to other students entitled to the course. */
     isPublic: boolean('is_public').notNull().default(true),
     replyCount: integer('reply_count').notNull().default(0),
+    /**
+     * Moderation (Section 12). Hidden, never deleted: a thread a teacher took
+     * down is evidence if the student disputes it, and a hard delete would take
+     * the replies with it.
+     */
+    hiddenAt: timestamp('hidden_at', { withTimezone: true }),
+    hiddenBy: uuid('hidden_by').references(() => profiles.id),
+    hiddenReason: text('hidden_reason'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index('doubt_threads_lesson_idx').on(t.lessonId, t.createdAt.desc()).where(sql`is_public`),
     index('doubt_threads_unresolved_idx').on(t.courseId).where(sql`NOT is_resolved`),
+    /** The teacher's inbox: "my unanswered doubts, oldest first". */
+    index('doubt_threads_inbox_idx')
+      .on(t.courseId, t.createdAt)
+      .where(sql`NOT is_resolved AND hidden_at IS NULL`),
   ],
 );
 
-export const doubtReplies = pgTable('doubt_replies', {
-  id: uuid('id').primaryKey(),
-  threadId: uuid('thread_id')
-    .notNull()
-    .references(() => doubtThreads.id, { onDelete: 'cascade' }),
-  authorId: uuid('author_id')
-    .notNull()
-    .references(() => profiles.id, { onDelete: 'cascade' }),
-  body: text('body').notNull(),
-  imageR2Key: text('image_r2_key'),
-  isTeacherAnswer: boolean('is_teacher_answer').notNull().default(false),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const doubtReplies = pgTable(
+  'doubt_replies',
+  {
+    id: uuid('id').primaryKey(),
+    threadId: uuid('thread_id')
+      .notNull()
+      .references(() => doubtThreads.id, { onDelete: 'cascade' }),
+    authorId: uuid('author_id')
+      .notNull()
+      .references(() => profiles.id, { onDelete: 'cascade' }),
+    body: text('body').notNull(),
+    imageR2Key: text('image_r2_key'),
+    isTeacherAnswer: boolean('is_teacher_answer').notNull().default(false),
+    hiddenAt: timestamp('hidden_at', { withTimezone: true }),
+    hiddenBy: uuid('hidden_by').references(() => profiles.id),
+    hiddenReason: text('hidden_reason'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('doubt_replies_thread_idx').on(t.threadId, t.createdAt)],
+);
+
+/**
+ * Reports from students (Section 12).
+ *
+ * One row per reporter per target, enforced by a unique index: a report is a
+ * signal to a teacher, not a vote, and letting one student file fifty makes the
+ * count meaningless.
+ */
+export const doubtReports = pgTable(
+  'doubt_reports',
+  {
+    id: uuid('id').primaryKey(),
+    threadId: uuid('thread_id').references(() => doubtThreads.id, { onDelete: 'cascade' }),
+    replyId: uuid('reply_id').references(() => doubtReplies.id, { onDelete: 'cascade' }),
+    reporterId: uuid('reporter_id')
+      .notNull()
+      .references(() => profiles.id, { onDelete: 'cascade' }),
+    reason: text('reason').notNull(),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('doubt_reports_thread_once').on(t.threadId, t.reporterId),
+    unique('doubt_reports_reply_once').on(t.replyId, t.reporterId),
+    index('doubt_reports_open_idx').on(t.createdAt).where(sql`reviewed_at IS NULL`),
+  ],
+);
 
 // ── Certificates (Phase 9) ──────────────────────────────────────────────────
 
@@ -103,4 +152,5 @@ export const courseCompletionRules = pgTable('course_completion_rules', {
 });
 
 export type DoubtThread = typeof doubtThreads.$inferSelect;
+export type DoubtReply = typeof doubtReplies.$inferSelect;
 export type Certificate = typeof certificates.$inferSelect;

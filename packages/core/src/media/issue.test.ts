@@ -114,7 +114,9 @@ describe('playback issuance refuses without entitlement', () => {
       studentId: student.id,
       kind: 'subscription',
       startsAt: new Date(Date.now() - 60 * DAY),
-      expiresAt: new Date(Date.now() - DAY),
+      // Past the Section 8.3 grace period. A lapse of one day still plays, by
+      // design — the test below covers that.
+      expiresAt: new Date(Date.now() - 30 * DAY),
     });
 
     await assert.rejects(
@@ -126,6 +128,27 @@ describe('playback issuance refuses without entitlement', () => {
       },
     );
     assert.equal(fake.grantCalls.length, 0);
+  });
+
+  it('still mints playback inside the grace period', async () => {
+    // The consequence of Section 8.3 at the sharpest edge in the product: a
+    // student whose subscription lapsed yesterday can still obtain a VdoCipher
+    // OTP. That is deliberate — the alternative is locking a paying student out
+    // overnight while a manual renewal is verified — but it is the kind of thing
+    // that must be asserted rather than assumed.
+    const student = await createUser();
+    await grantEntitlement({
+      studentId: student.id,
+      kind: 'subscription',
+      startsAt: new Date(Date.now() - 60 * DAY),
+      expiresAt: new Date(Date.now() - DAY),
+    });
+
+    const before = fake.grantCalls.length;
+    const grant = await issuePlayback(ctx(student.id), course.paidLessonId);
+
+    assert.ok(grant.otp, 'grace period playback must still work');
+    assert.equal(fake.grantCalls.length, before + 1);
   });
 
   it('denies a revoked entitlement and mints nothing', async () => {
@@ -242,19 +265,34 @@ describe('rate limiting is inside the issuance path', () => {
     const student = await createUser();
     await grantEntitlement({ studentId: student.id, kind: 'lifetime_all' });
 
-    for (let i = 0; i < 60; i++) {
-      await issuePlayback(ctx(student.id), course.paidLessonId);
+    // Pulls until it is refused rather than assuming exactly 60 succeed. The
+    // limiter uses a FIXED window keyed on the wall clock, so a loop that
+    // straddles the top of the hour gets a fresh bucket part-way through and
+    // the 61st call is legitimately allowed. Asserting an exact count made this
+    // test fail roughly once an hour for reasons that had nothing to do with
+    // the code under test.
+    let granted = 0;
+    let refusal: unknown = null;
+
+    for (let i = 0; i < 90; i++) {
+      try {
+        await issuePlayback(ctx(student.id), course.paidLessonId);
+        granted++;
+      } catch (err) {
+        refusal = err;
+        break;
+      }
     }
 
-    await assert.rejects(
-      () => issuePlayback(ctx(student.id), course.paidLessonId),
-      (err: unknown) => {
-        assert.ok(err instanceof ApiError);
-        assert.equal(err.status, 429);
-        return true;
-      },
-    );
-    assert.equal(fake.grantCalls.length, 60);
+    assert.ok(refusal instanceof ApiError, 'the cap must eventually refuse');
+    assert.equal((refusal as ApiError).status, 429);
+
+    // The claim that matters: the vendor was asked exactly as many times as the
+    // caller got through, and no more. A refusal that still minted an OTP would
+    // be a leak.
+    assert.equal(fake.grantCalls.length, granted);
+    assert.ok(granted >= 60, `expected at least the hourly cap, got ${granted}`);
+    assert.ok(granted <= 120, `the cap is not being enforced at all: ${granted} grants`);
   });
 });
 

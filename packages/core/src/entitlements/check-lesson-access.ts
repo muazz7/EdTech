@@ -1,9 +1,68 @@
 import { and, eq, gt, isNull, isNotNull, lte, or } from 'drizzle-orm';
 import { courses, entitlements, getDb, lessons, profiles } from '@edtech/db';
+import { PAYMENT_GRACE_PERIOD_DAYS } from '@edtech/shared';
 
 export type AccessResult =
-  | { allowed: true; via: 'free' | 'subscription' | 'lifetime_all' | 'single_course' | 'manual' | 'owner' }
+  | {
+      allowed: true;
+      via: 'free' | 'subscription' | 'lifetime_all' | 'single_course' | 'manual' | 'owner';
+      /**
+       * The entitlement has actually lapsed, but is inside the Section 8.3
+       * grace period. Access continues; the UI is expected to say so loudly.
+       */
+      inGrace?: true;
+      graceEndsAt?: Date;
+    }
   | { allowed: false; reason: 'no_entitlement' | 'expired' | 'revoked' | 'unpublished' };
+
+/**
+ * Grace period (Section 8.3): three days after expiry, content still opens.
+ *
+ * This is deliberate revenue leakage. Without it a student who paid at 11pm and
+ * is verified at 9am spends the night locked out of a course they have paid
+ * for, and "I paid and got locked out while you were asleep" is the worst
+ * support conversation in the product. Three days of leakage is cheaper than
+ * that conversation, and far cheaper than the refund it usually ends in.
+ *
+ * The window is measured from `expires_at`, not from a payment, so it applies
+ * uniformly to a lapsed subscription and to a manual grant that ran out.
+ */
+function graceCutoff(now: Date): Date {
+  return new Date(now.getTime() - PAYMENT_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
+}
+
+function graceEnd(expiresAt: Date): Date {
+  return new Date(expiresAt.getTime() + PAYMENT_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
+}
+
+type AccessVia = 'subscription' | 'lifetime_all' | 'single_course' | 'manual';
+
+/**
+ * Which access rule this entitlement satisfies for this course, in the order
+ * the rules are written, or null if none.
+ *
+ * Order matters and is not interchangeable: a manual `lifetime_all` grant on a
+ * course flagged OUT of all-access matches only the last rule, and calling it
+ * 'lifetime_all' would report an access route the student does not hold.
+ */
+function matchVia(
+  entitlement: { kind: string; courseId: string | null; source: string },
+  courseId: string,
+  isInAllAccess: boolean,
+): AccessVia | null {
+  if (entitlement.kind === 'single_course' && entitlement.courseId === courseId) {
+    return 'single_course';
+  }
+  if (entitlement.kind === 'lifetime_all' && isInAllAccess) return 'lifetime_all';
+  if (entitlement.kind === 'subscription' && isInAllAccess) return 'subscription';
+  if (
+    entitlement.source === 'manual_grant' &&
+    (!entitlement.courseId || entitlement.courseId === courseId)
+  ) {
+    return 'manual';
+  }
+  return null;
+}
 
 /**
  * The single entitlement gate. Not two, not a helper per feature — one.
@@ -60,6 +119,7 @@ export async function checkLessonAccess(userId: string, lessonId: string): Promi
       kind: entitlements.kind,
       courseId: entitlements.courseId,
       source: entitlements.source,
+      expiresAt: entitlements.expiresAt,
     })
     .from(entitlements)
     .where(
@@ -67,23 +127,33 @@ export async function checkLessonAccess(userId: string, lessonId: string): Promi
         eq(entitlements.studentId, userId),
         isNull(entitlements.revokedAt),
         lte(entitlements.startsAt, now),
-        or(isNull(entitlements.expiresAt), gt(entitlements.expiresAt, now)),
+        // Includes entitlements that lapsed inside the grace window. Live ones
+        // are preferred below, so a student holding both keeps full access.
+        or(isNull(entitlements.expiresAt), gt(entitlements.expiresAt, graceCutoff(now))),
       ),
     );
 
-  for (const e of active) {
-    if (e.kind === 'single_course' && e.courseId === row.courseId) {
-      return { allowed: true, via: 'single_course' };
-    }
-    if (e.kind === 'lifetime_all' && row.isInAllAccess) {
-      return { allowed: true, via: 'lifetime_all' };
-    }
-    if (e.kind === 'subscription' && row.isInAllAccess) {
-      return { allowed: true, via: 'subscription' };
-    }
-    if (e.source === 'manual_grant' && (!e.courseId || e.courseId === row.courseId)) {
-      return { allowed: true, via: 'manual' };
-    }
+  // `via` comes from the rule that MATCHED, not from the entitlement's kind.
+  // A manual lifetime grant on a course flagged out of all-access matches only
+  // the manual_grant rule, and reporting it as 'lifetime_all' would claim an
+  // access route the student does not actually hold.
+  const matched = active
+    .map((e) => ({ entitlement: e, via: matchVia(e, row.courseId, row.isInAllAccess) }))
+    .filter((m): m is { entitlement: (typeof active)[number]; via: AccessVia } => m.via !== null);
+
+  // A still-live entitlement wins over one in grace: a student who renewed
+  // early must not be told they are in a grace period.
+  const live = matched.find((m) => !m.entitlement.expiresAt || m.entitlement.expiresAt > now);
+  if (live) return { allowed: true, via: live.via };
+
+  const lapsed = matched.find((m) => m.entitlement.expiresAt);
+  if (lapsed?.entitlement.expiresAt) {
+    return {
+      allowed: true,
+      via: lapsed.via,
+      inGrace: true,
+      graceEndsAt: graceEnd(lapsed.entitlement.expiresAt),
+    };
   }
 
   // Distinguish "expired" from "never had it": the first shows a Renew CTA,
@@ -166,6 +236,7 @@ export async function checkCourseAccess(userId: string, courseId: string): Promi
       kind: entitlements.kind,
       courseId: entitlements.courseId,
       source: entitlements.source,
+      expiresAt: entitlements.expiresAt,
     })
     .from(entitlements)
     .where(
@@ -173,23 +244,27 @@ export async function checkCourseAccess(userId: string, courseId: string): Promi
         eq(entitlements.studentId, userId),
         isNull(entitlements.revokedAt),
         lte(entitlements.startsAt, now),
-        or(isNull(entitlements.expiresAt), gt(entitlements.expiresAt, now)),
+        or(isNull(entitlements.expiresAt), gt(entitlements.expiresAt, graceCutoff(now))),
       ),
     );
 
-  for (const e of active) {
-    if (e.kind === 'single_course' && e.courseId === courseId) {
-      return { allowed: true, via: 'single_course' };
-    }
-    if (e.kind === 'lifetime_all' && course.isInAllAccess) {
-      return { allowed: true, via: 'lifetime_all' };
-    }
-    if (e.kind === 'subscription' && course.isInAllAccess) {
-      return { allowed: true, via: 'subscription' };
-    }
-    if (e.source === 'manual_grant' && (!e.courseId || e.courseId === courseId)) {
-      return { allowed: true, via: 'manual' };
-    }
+  // Same rule as the lesson gate, through the same helper: the two must agree,
+  // or a course would list as open and every lesson in it would refuse.
+  const matched = active
+    .map((e) => ({ entitlement: e, via: matchVia(e, courseId, course.isInAllAccess) }))
+    .filter((m): m is { entitlement: (typeof active)[number]; via: AccessVia } => m.via !== null);
+
+  const live = matched.find((m) => !m.entitlement.expiresAt || m.entitlement.expiresAt > now);
+  if (live) return { allowed: true, via: live.via };
+
+  const lapsed = matched.find((m) => m.entitlement.expiresAt);
+  if (lapsed?.entitlement.expiresAt) {
+    return {
+      allowed: true,
+      via: lapsed.via,
+      inGrace: true,
+      graceEndsAt: graceEnd(lapsed.entitlement.expiresAt),
+    };
   }
 
   if (await hasExpiredEntitlementFor(userId, courseId, course.isInAllAccess)) {

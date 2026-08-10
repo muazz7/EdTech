@@ -35,6 +35,16 @@ export const paymentIntentSchema = z
   .object({
     courseId: uuidSchema.optional(),
     planId: uuidSchema.optional(),
+    /** Course purchases only. A teacher's code cannot discount a platform-wide
+     *  plan, which spans every other teacher's catalog. */
+    promoCode: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .min(4)
+      .max(32)
+      .regex(/^[A-Z0-9-]+$/)
+      .optional(),
   })
   .refine((v) => Boolean(v.courseId) !== Boolean(v.planId), {
     message: 'Choose either a course or a plan.',

@@ -19,6 +19,11 @@
       "comment": "Auto-submits attempts abandoned past 24h so they stop holding one of the student's tries. Offset from the certificate sweep so the two never contend for connections.",
       "path": "/api/v1/cron/sweep-attempts",
       "schedule": "30 * * * *"
+    },
+    {
+      "comment": "Section 8.3. 04:00 UTC is 10:00 Asia/Dhaka — a message about renewing arrives when a student can act on it, not at 3am.",
+      "path": "/api/v1/cron/expiry-reminders",
+      "schedule": "0 4 * * *"
     }
   ]
 }

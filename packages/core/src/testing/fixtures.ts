@@ -51,6 +51,43 @@ export function randomPhone(): string {
 const createdUserIds: string[] = [];
 const createdCourseIds: string[] = [];
 
+/**
+ * Creates the auth user, retrying transient failures.
+ *
+ * The suite creates well over a hundred auth users in a full run, and the
+ * Supabase Admin API is a shared external service with its own rate limits. A
+ * single 429 or 502 here fails the `before()` hook of whichever test file is
+ * running, which takes down every suite in that file at once — a failure that
+ * looks like a logic bug and is not one.
+ *
+ * Only transient statuses are retried. A 400 or a 422 is a real problem with
+ * the request and still throws immediately.
+ */
+async function createAuthUser(url: string, phone: string): Promise<string> {
+  const TRANSIENT = new Set([429, 500, 502, 503, 504]);
+
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await fetch(`${url}/auth/v1/admin/users`, {
+      method: 'POST',
+      headers: adminHeaders(),
+      body: JSON.stringify({ phone, phone_confirm: true }),
+    });
+
+    if (res.ok) return ((await res.json()) as { id: string }).id;
+
+    if (!TRANSIENT.has(res.status) || attempt === 3) {
+      throw new Error(`createUser failed: ${res.status} ${await res.text()}`);
+    }
+
+    // Loud on purpose: if the suite is being throttled, that should be visible
+    // in the output rather than hidden behind a silent retry.
+    console.warn(`[fixtures] auth admin returned ${res.status}, retrying (${attempt + 1}/3)`);
+    await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
+  }
+
+  throw new Error('createUser failed: exhausted retries');
+}
+
 export async function createUser(
   role: UserRole = 'student',
   fullName = 'Test User',
@@ -58,17 +95,7 @@ export async function createUser(
   const url = requireEnv('SUPABASE_URL');
   const phone = randomPhone();
 
-  const res = await fetch(`${url}/auth/v1/admin/users`, {
-    method: 'POST',
-    headers: adminHeaders(),
-    body: JSON.stringify({ phone, phone_confirm: true }),
-  });
-
-  if (!res.ok) {
-    throw new Error(`createUser failed: ${res.status} ${await res.text()}`);
-  }
-
-  const { id } = (await res.json()) as { id: string };
+  const id = await createAuthUser(url, phone);
   createdUserIds.push(id);
 
   const db = getDb();

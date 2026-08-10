@@ -137,7 +137,9 @@ describe('subscription', () => {
       studentId: student.id,
       kind: 'subscription',
       startsAt: new Date(Date.now() - 60 * DAY),
-      expiresAt: new Date(Date.now() - DAY),
+      // Well past the Section 8.3 grace period. A lapse of one day still opens
+      // content on purpose; that boundary is covered in expiry.test.ts.
+      expiresAt: new Date(Date.now() - 30 * DAY),
     });
     const r = await checkLessonAccess(student.id, allAccess.paidLessonId);
     // 'expired' drives a Renew CTA; 'no_entitlement' drives Choose a plan.
@@ -153,7 +155,9 @@ describe('subscription', () => {
       studentId: student.id,
       kind: 'subscription',
       startsAt: new Date(Date.now() - 60 * DAY),
-      expiresAt: new Date(Date.now() - DAY),
+      // Well past the Section 8.3 grace period. A lapse of one day still opens
+      // content on purpose; that boundary is covered in expiry.test.ts.
+      expiresAt: new Date(Date.now() - 30 * DAY),
     });
     await grantEntitlement({
       studentId: student.id,

@@ -106,7 +106,8 @@ with `DATABASE_POOL_MAX`.
 ## Scripts
 
 ```bash
-npm test                  # 199 unit/integration tests against the DB
+npm test                  # 260 unit/integration tests against the DB
+npm run preflight         # launch readiness: env, secrets, migrations, RLS, content
 npm run db:check          # tables, RLS, policies, sessions, stuck backends
 npm run audit:rls         # what the PUBLISHED anon key can actually read
 npm run smoke:devices     # credential lifecycle over HTTP
@@ -114,6 +115,8 @@ npm run smoke:builder     # teacher course builder end to end
 npm run smoke:payments    # purchase loop, settings, verification queue
 npm run smoke:catalog     # public catalog, lock flags, progress, account
 npm run smoke:assessment  # quizzes, answer-key leak, assignments, certificates
+npm run smoke:commerce    # plans, owner console boundary, promo quantity and scope
+npm run smoke:doubts      # private threads, teacher-answer flag, hide-not-delete
 npm run contrast          # design tokens vs WCAG (no server needed)
 
 # DEV ONLY flags, no npm alias on purpose — reach for these deliberately
@@ -129,7 +132,13 @@ ever touching this API. The script checks both halves: which tables have RLS off
 and what the published anon key can *actually* read. Before migration 0006 the
 answer to the second question included `courses`, `modules` and `lessons`.
 
-All five HTTP suites share ONE cookie jar (`dev-web`). That is deliberate:
+The suites share one real database and one test teacher account, so anything a
+suite does to that account it must undo. `commerce-smoke` promotes the teacher to
+admin and adds a payment number; both are reverted in its cleanup, because
+`payments-smoke` asserts on exactly which numbers a student is shown and failed
+the first time this was missed.
+
+All seven HTTP suites share ONE cookie jar (`dev-web`). That is deliberate:
 each jar is a distinct device fingerprint, and three separate jars burned the
 4-per-30-days budget in a single sitting. Sharing one makes them all "the same
 browser", which is what they actually are. `two-device-test.mjs` still exercises
@@ -417,10 +426,9 @@ Roster and manual grants:
   are **not** listed. A teacher seeing an empty roster while subscribers watch
   would otherwise draw the wrong conclusion about their course.
 
-Not built yet in Phase 2:
-
-- Expiry reminders and the grace period (Section 8.3)
-- Plan purchase UI (single-course only so far; `plans` has no admin screen)
+Both gaps listed here originally — expiry reminders with the grace period, and
+the plan purchase and admin screens — were closed later. See the Section 8.3
+section below and `/plans`, `/admin/plans`.
 
 ## Phase 3 status (Student experience)
 
@@ -632,6 +640,164 @@ The Phase 3 invariant that a draft course answers 404 was being enforced **only
 by the API**, and PostgREST goes around the API. `lessons_read` also allowed any
 free lesson, including free lessons of an unreleased course. Both are closed, and
 `audit:rls` now asserts the draft rule at the database rather than at the API.
+
+## Phase 5 status (Owner console, plans, promo codes)
+
+Plans were **unsellable end to end** before this. `createPaymentIntent` accepted a
+`planId`, `grantEntitlement` handled `subscription` and `lifetime_all`, and both
+were unit-tested — but nothing could create a plan and nothing could buy one. The
+`/plans` endpoint listed rows no screen could insert.
+
+**The owner console is a separate area, not a teacher permission.** A plan grants
+access across every teacher's catalog, which is exactly why no teacher may create
+or price one (ADR 0003). `resolveAdmin` reads the live role from the database, so
+a demoted admin loses the console immediately rather than when their 15-minute
+token expires.
+
+Plans are created **off sale**. A plan goes in front of every student the moment
+it is active, so it is never born that way — and a plan priced at zero cannot be
+activated at all. Retiring deactivates and never deletes: entitlements and
+payments reference it, and a student must still be able to see what they bought a
+year later.
+
+**Promo codes** (ADR 0002) are teacher-issued, with the two controls asked for by
+name: how many students may use a code, and when it stops. Both hold server-side.
+
+- The quantity is counted from **real payments**, not a counter column, and a
+  pending payment holds its slot — so "first 20 students" cannot be oversold
+  while proofs are being checked. Reservation happens under a `SELECT … FOR
+  UPDATE` on the promo row, so two students racing for the last slot cannot both
+  take it.
+- A code can only ever discount its issuer's own courses, and **never a plan** —
+  a teacher discounting a plan would be discounting every other teacher's
+  revenue.
+- Every refusal returns the **same message**, whether the code does not exist, is
+  expired, is exhausted or belongs elsewhere. A code is a short bearer secret;
+  an endpoint whose message changes is an oracle for enumerating the live ones.
+  Validation is also rate limited per user.
+- A 100% code settles on the spot: the payment is recorded verified and the
+  entitlement granted with `source = 'promo'`. Asking for a screenshot of a
+  zero-taka transfer would be theatre.
+
+Discounts round **down**, so a 33% code on 999 poisha never charges a poisha more
+than the student was shown.
+
+## Doubt-solving (Section 12)
+
+Public by default, and that is the entire design: the same question gets asked
+forty times, and one searchable answered thread is worth more than forty private
+replies. The private switch exists for the questions a student would not ask in
+front of the class, and the ask form says which it is before they type.
+
+Three rules carry the weight, all tested over HTTP as well as in unit tests:
+
+- **`is_teacher_answer` is set from the caller's live role, never from the
+  request.** That flag is what renders a reply as the authoritative answer. The
+  smoke test posts it in the body as a student and asserts the server ignores it.
+- **A private thread answers 404, not 403**, to anyone but its author and the
+  teacher. A 403 would let a link confirm the thread exists — which for a
+  question titled "I understood nothing today" is the whole privacy problem.
+- **Hiding never deletes.** A student whose question was taken down will ask why,
+  and the record has to survive that conversation. A delete would also take every
+  reply with it, including a teacher's answer other students were relying on. The
+  reason is required and recorded with the moderator's name.
+
+Reports are one per student per target, enforced by a unique index — a report is
+a signal to a teacher, not a vote. A duplicate answers success rather than an
+error: telling a student they already reported something invites a second attempt
+and changes nothing.
+
+The teacher inbox is unanswered-first, then oldest, for the same reason the
+marking queue is. Answering happens on the row rather than behind a navigation:
+clearing twenty questions should not cost forty page transitions.
+
+No realtime anything. The thread list refreshes on open and after a reply, plus
+an in-app notification — Section 12 is explicit that this is sufficient and saves
+a whole subsystem. The teacher notification is in-app only; a teacher with forty
+students would otherwise get forty pushes a day and turn them off.
+
+## Grace period and expiry reminders (Section 8.3)
+
+There is no auto-charge, so every renewal is a fresh manual cycle and a
+subscription that lapses silently is a churned student who thinks the product
+broke. Reminders go out at T−7, T−3, T−1, on lapse, and once at T+30.
+
+The stage reached is recorded on the entitlement, which makes the daily sweep
+idempotent two ways: running it twice sends nothing twice, and a sweep missed
+for a week sends **one** catch-up message rather than a backlog of four.
+
+**The grace period changes the single entitlement gate.** For three days past
+expiry, content still opens and `checkLessonAccess` returns `inGrace` so the UI
+can say so. This is deliberate revenue leakage: without it, a student who paid at
+11pm and is verified at 9am spends the night locked out of a course they have
+paid for. That conversation ends in a refund far more often than three days of
+access costs.
+
+Consequences worth knowing:
+
+- A **live** entitlement always wins over one in grace, so a student who renewed
+  early is never told their access is running out.
+- A **revoked** entitlement gets no grace at all. Grace is for running out of
+  time, not for having access taken away.
+- Playback OTPs are still minted during grace — asserted explicitly in
+  `issue.test.ts`, because that is the sharpest edge the rule touches.
+
+Day counts come from **Postgres**, not from `Date.now()`. The application clock
+runs behind the database's often enough to round "5 days left" up to 6 — the same
+skew that once made a freshly created promo code look not-yet-started.
+
+## Piracy signals (Section 17.5)
+
+`/admin/piracy` — admin only, because IP addresses and device counts are not
+something a teacher should read about another teacher's students.
+
+Two rules the screen is built around:
+
+- **Nothing bans anyone.** There is no ban button. Every signal has an innocent
+  explanation — a shared family phone, a village with one broadband line, a
+  student revising the night before an exam — and the copy says so next to each.
+  A student wrongly locked out during exam season is a refund and a public
+  complaint.
+- **Signals accumulate, they do not multiply.** The badge is a count next to the
+  evidence, not a weighted score. A weighted score invites tuning the weights
+  until the answer is the one you wanted.
+
+IP addresses come back with the **last octet masked**. The reviewer's question is
+"how many different networks", not "which house"; without the mask this screen is
+a standing list of students' home addresses.
+
+The tests that matter are the negative ones: a normal student is not flagged, and
+fifty heartbeats from one home connection do not look like fifty networks. A
+dashboard that flags everybody is worse than no dashboard, because the one real
+ripper ends up buried.
+
+## Launch readiness
+
+`npm run preflight` checks configuration rather than code — the test suite proves
+the code works, this proves the environment it is about to run in is real. Each
+check names the specific failure it prevents. Blocking issues exit non-zero;
+warnings are things that degrade rather than break.
+
+It catches, among others: a server secret carrying a `NEXT_PUBLIC_` prefix (which
+would ship the VdoCipher secret or the R2 credentials in the browser bundle), a
+migration missing from the journal, a table without RLS, and `DATABASE_URL`
+pointing at the transaction pooler — which cannot hold the multi-statement
+transaction that login and payment approval both need.
+
+Current state: **READY, 11 warnings** — all of them missing third-party
+credentials (`CRON_SECRET`, VdoCipher, R2, Upstash, Sentry, FCM) plus no active
+payment method and no free preview lesson.
+
+## A migration was silently skipped, and the journal now gets checked
+
+Migration 0006 was hand-written with a `when` timestamp about five days in the
+future. drizzle-kit applies a journal entry only when its `when` is newer than the
+last applied `created_at`, so **0007 was skipped without an error** and 0008 then
+failed on a table that did not exist.
+
+The ledger entry was realigned and `db-check` now verifies the journal on every
+run: every entry applied, timestamps monotonic. A migration that does not run is
+worse than one that fails, because nothing says so.
 
 ## Decisions
 

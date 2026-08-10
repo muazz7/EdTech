@@ -49,7 +49,9 @@ function TeacherChrome({ children }: { children: ReactNode }) {
             {[
               { href: '/teacher', label: 'Courses' },
               { href: '/teacher/grading', label: 'Marking' },
+              { href: '/teacher/doubts', label: 'Questions' },
               { href: '/teacher/payments', label: 'Payments' },
+              { href: '/teacher/promo-codes', label: 'Promo codes' },
               { href: '/teacher/payment-methods', label: 'Payment settings' },
             ].map((item) => {
               // Exact match for the index, prefix match for the rest, so

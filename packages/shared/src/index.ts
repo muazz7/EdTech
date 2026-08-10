@@ -6,3 +6,5 @@ export * from './schemas/auth.js';
 export * from './schemas/content.js';
 export * from './schemas/payments.js';
 export * from './schemas/assessment.js';
+export * from './schemas/commerce.js';
+export * from './schemas/community.js';

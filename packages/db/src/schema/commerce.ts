@@ -30,6 +30,51 @@ export const plans = pgTable('plans', {
 });
 
 /**
+ * Teacher-issued discount codes (ADR 0002).
+ *
+ * The teacher sets the validity window and the quantity — those were the two
+ * things asked for by name. Quantity is enforced against non-rejected payments
+ * rather than a counter column, so a code cannot drift out of step with what
+ * was actually redeemed.
+ *
+ * A code is scoped to its issuing teacher and optionally to one of their
+ * courses. It can never apply to a platform-wide plan: those span every
+ * teacher's catalog, and one teacher must not be able to discount another
+ * teacher's revenue.
+ */
+export const promoCodes = pgTable(
+  'promo_codes',
+  {
+    id: uuid('id').primaryKey(),
+    /** Uppercase, unique across the platform: students type it, and two
+     *  teachers owning "EID50" would be unresolvable. */
+    code: text('code').notNull().unique(),
+    teacherId: uuid('teacher_id')
+      .notNull()
+      .references(() => profiles.id, { onDelete: 'cascade' }),
+    /** NULL means every course this teacher owns. */
+    courseId: uuid('course_id').references(() => courses.id, { onDelete: 'cascade' }),
+    /** 100 means free access — the payment is settled at zero and the
+     *  entitlement is granted without a proof step, since there is nothing to
+     *  prove. */
+    discountPercent: integer('discount_percent').notNull(),
+    /** How many students may use it. The teacher's "quantity". */
+    maxRedemptions: integer('max_redemptions').notNull(),
+    startsAt: timestamp('starts_at', { withTimezone: true }).notNull().defaultNow(),
+    /** The teacher's "duration". NULL never expires. */
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    isActive: boolean('is_active').notNull().default(true),
+    note: text('note'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('promo_discount_range', sql`${t.discountPercent} BETWEEN 1 AND 100`),
+    check('promo_quantity_positive', sql`${t.maxRedemptions} > 0`),
+    index('promo_codes_teacher_idx').on(t.teacherId).where(sql`is_active`),
+  ],
+);
+
+/**
  * ONE table for all three access models. This is deliberate: the entitlement
  * check becomes a single query with no branching, and a student can hold
  * several simultaneously (an expired subscription plus a lifetime
@@ -56,6 +101,15 @@ export const entitlements = pgTable(
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
     revokedReason: text('revoked_reason'),
     notes: text('notes'),
+    /**
+     * Which expiry reminder has been sent (Section 8.3): 7, 3, 1, 0 for the
+     * lapse notice, or -30 for the winback.
+     *
+     * A column rather than a search of the notifications table: the sweep runs
+     * daily and must be idempotent, and "have I already told this student"
+     * should be one indexed read, not a scan.
+     */
+    reminderStage: integer('reminder_stage'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -117,6 +171,12 @@ export const payments = pgTable(
     amountPoisha: integer('amount_poisha').notNull(),
     currency: char('currency', { length: 3 }).notNull().default('BDT'),
 
+    /** The code used, and what it took off. `amount_poisha` above is already
+     *  the discounted figure — this is kept so a dispute can be settled against
+     *  the original price and the code that changed it. */
+    promoCodeId: uuid('promo_code_id').references(() => promoCodes.id),
+    discountPoisha: integer('discount_poisha').notNull().default(0),
+
     // manual submission
     channel: paymentChannel('channel').notNull(),
     senderNumber: text('sender_number'),
@@ -153,10 +213,18 @@ export const payments = pgTable(
     index('payments_reviewer_pending_idx')
       .on(t.reviewerId, t.submittedAt)
       .where(sql`status = 'pending'`),
+    /** One redemption per student per code, enforced by the database rather
+     *  than by a check that a retry could race past. Rejected payments are
+     *  excluded so a student whose proof was refused can try again. */
+    uniqueIndex('uniq_promo_per_student')
+      .on(t.promoCodeId, t.studentId)
+      .where(sql`promo_code_id IS NOT NULL AND status <> 'rejected'`),
+    index('payments_promo_idx').on(t.promoCodeId).where(sql`promo_code_id IS NOT NULL`),
   ],
 );
 
 export type Plan = typeof plans.$inferSelect;
+export type PromoCode = typeof promoCodes.$inferSelect;
 export type Entitlement = typeof entitlements.$inferSelect;
 export type NewEntitlement = typeof entitlements.$inferInsert;
 export type Payment = typeof payments.$inferSelect;

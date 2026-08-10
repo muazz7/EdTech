@@ -12,6 +12,7 @@ import { DrmPlayer } from '@/components/learn/drm-player';
 import { DocumentViewer } from '@/components/learn/document-viewer';
 import { QuizPanel } from '@/components/learn/quiz-panel';
 import { AssignmentPanel } from '@/components/learn/assignment-panel';
+import { DoubtsPanel } from '@/components/learn/doubts-panel';
 import type { ProgressSnapshot } from '@/components/learn/use-progress-reporter';
 
 type LessonView = {
@@ -315,6 +316,10 @@ function LessonScreen() {
               </div>
             </div>
           )}
+
+          {/* Questions sit under the content, not beside it: a student asks
+              after watching, not while. */}
+          <DoubtsPanel lessonId={lesson.id} />
 
           {lesson.siblings.length > 1 && (
             <section className="mt-10">
